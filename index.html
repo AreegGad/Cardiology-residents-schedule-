@@ -25,6 +25,7 @@
 <button onclick="newMonth()">＋ New month</button>
 <button id="resBtn" class="secondary" onclick="residentsModal()">Residents</button>
 <button id="dutyBtn" class="secondary" onclick="dutiesModal()">Duties</button>
+<button id="usersBtn" class="secondary" onclick="usersModal()">Users</button>
 <div class="spacer"></div><span id="role" class="msg"></span><button class="secondary" onclick="signOut()">Sign out</button>
 </div>
 <div class="card"><div class="toolbar"><button onclick="moveMonth(-1)">‹</button><button onclick="moveMonth(1)">›</button><button class="secondary" onclick="statsModal()">📊 Statistics</button><div class="spacer"></div><span class="msg">Dates are on the left; duties are across the top.</span></div></div>
@@ -57,7 +58,7 @@ sb.auth.onAuthStateChange(async(_event,session)=>{user=session?.user||null;if(us
 
 async function load(){
  let r=await sb.from("schedule_user_roles").select("role").eq("user_id",user.id).maybeSingle(); role=r.data?.role||"viewer";$("role").textContent=`${role[0].toUpperCase()+role.slice(1)} · ${user.email}`;
- $("resBtn").style.display=isAdmin()?"":"none";$("dutyBtn").style.display=isAdmin()?"":"none";$("commandCard").style.display=canEdit()?"":"none";
+ $("resBtn").style.display=isAdmin()?"":"none";$("dutyBtn").style.display=isAdmin()?"":"none";$("usersBtn").style.display=isAdmin()?"":"none";
  let a=await Promise.all([sb.from("schedule_residents").select("*").order("name"),sb.from("schedule_duties").select("*").order("created_at"),sb.from("schedule_months").select("*").order("month_key")]);
  residents=a[0].data||[];duties=a[1].data||[];months=a[2].data||[];
  if(!months.some(m=>m.month_key===currentKey) && canEdit()){await sb.from("schedule_months").insert({month_key:currentKey});let x=await sb.from("schedule_months").select("*").order("month_key");months=x.data||[]}
