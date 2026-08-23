@@ -15,7 +15,7 @@
 <div id="loginMsg" class="msg"></div>
 </div>
 <div id="app" class="app hidden"><div class="top"><h1> Residents Schedule</h1><select id="month" class="month"></select><button onclick="newMonth()">+ New month</button><button id="resBtn" class="secondary" onclick="residentsModal()">Residents</button><button id="dutyBtn" class="secondary" onclick="dutiesModal()">Duties</button><button id="usersBtn" class="secondary" onclick="usersModal()">Users</button><div class="spacer"></div><span id="role" class="msg"></span><button class="secondary" onclick="signOut()">Sign out</button></div>
-<div class="card"><div class="toolbar"><button onclick="moveMonth(-1)"><</button><button onclick="moveMonth(1)">></button><div class="spacer"></div><button class="secondary" onclick="statsModal()">Statistics</button><button class="secondary" onclick="searchModal()">Search</button></div></div>
+<div class="card"><div class="toolbar"><button onclick="moveMonth(-1)"><</button><button onclick="moveMonth(1)">></button><div class="spacer"></div><button class="secondary" onclick="statsModal()">Statistics</button><button class="secondary" onclick="searchModal()">Search</button><button class="secondary" onclick="exportDutiesDoc()">Export duties to Docs</button><button class="secondary" onclick="exportShiftsPhoto()">Export shifts as photo</button></div></div>
 <div class="tabs"><button id="morningTab" class="tab active" onclick="setTab('morning')">Morning Duties</button><button id="shiftTab" class="tab" onclick="setTab('24h')">24-hour Shifts</button></div>
 <div class="msg" style="margin:-3px 0 9px 2px">Note: Empty cells are allowed. A finalized assignment makes that resident unavailable elsewhere on the same date.</div><div id="commandCard" class="card"><b>Quick command</b><div class="toolbar" style="margin-top:7px"><input id="command" style="flex:1;min-width:260px" placeholder="Hossam has Smouha cath lab each Sunday"><button onclick="command()">Apply</button></div><div class="msg">Example: [Resident] has [Duty] each [weekday]</div><div id="notice" class="notice"></div></div>
 <div id="schedule"></div><div class="card"><b id="statsTitle">Morning-duty totals</b><div id="miniStats" style="margin-top:8px"></div></div></div>
@@ -106,6 +106,72 @@ function showModal(h){$("modalbox").innerHTML=h;$("modal").classList.add("show")
 async function residentsModal(){let list=residents.map(r=>`<div class="row"><span><span class="pill p${r.batch}">${r.batch}</span> <input id="rname_${r.id}" value="${esc(r.name)}" style="max-width:220px"><select id="rbatch_${r.id}">${BATCHES.map(x=>`<option ${x===r.batch?"selected":""}>${x}</option>`).join("")}</select></span><button onclick="editResident('${r.id}')">Save</button><button class="danger" onclick="deleteResident('${r.id}')">Delete</button></div>`).join("");showModal(`<h2>Residents</h2><div class="toolbar"><input id="rn" placeholder="Name"><select id="rb">${BATCHES.map(x=>`<option>${x}</option>`).join("")}</select><button onclick="addResident()">Add</button></div><div>${list||"No residents yet."}</div><p><button class="secondary" onclick="closeModal()">Done</button></p>`)}async function addResident(){let name=$("rn").value.trim(),batch=$("rb").value;if(!name)return;let x=await sb.from("schedule_residents").insert({name,batch});if(x.error)alert(x.error.message);await load();residentsModal()}async function editResident(id){let name=$("rname_"+id).value.trim(),batch=$("rbatch_"+id).value;if(!name)return;let x=await sb.from("schedule_residents").update({name,batch}).eq("id",id);if(x.error)alert(x.error.message);await load();residentsModal()}async function deleteResident(id){if(!confirm("Delete resident and their assignments?"))return;await sb.from("schedule_residents").delete().eq("id",id);await load();residentsModal()}
 async function dutiesModal(){let list=duties.map(d=>`<div class="row"><span><input id="dname_${d.id}" value="${esc(d.name)}" style="max-width:240px"><select id="dtype_${d.id}"><option value="morning" ${d.duty_type==="morning"?"selected":""}>Morning</option><option value="24h" ${d.duty_type==="24h"?"selected":""}>24 hour</option></select><input id="dslots_${d.id}" type="number" min="1" value="${d.slots}" style="width:70px"></span><button onclick="editDuty('${d.id}')">Save</button><button class="danger" onclick="deleteDuty('${d.id}')">Delete</button></div>`).join("");showModal(`<h2>Duties / shifts</h2><div class="toolbar"><input id="dn" placeholder="Duty name"><select id="dt"><option value="morning">Morning</option><option value="24h">24 hour</option></select><input id="ds" type="number" min="1" value="1" style="width:80px"><button onclick="addDuty()">Add</button></div><p class="msg">Slots are a maximum; every slot may be left empty.</p><div>${list}</div><p><button class="secondary" onclick="closeModal()">Done</button></p>`)}async function addDuty(){let name=$("dn").value.trim(),type=$("dt").value,slots=Math.max(1,+$("ds").value||1);if(!name)return;let x=await sb.from("schedule_duties").insert({name,duty_type:type,slots});if(x.error)alert(x.error.message);await load();dutiesModal()}async function editDuty(id){let name=$("dname_"+id).value.trim(),type=$("dtype_"+id).value,slots=Math.max(1,+$("dslots_"+id).value||1);if(!name)return;let x=await sb.from("schedule_duties").update({name,duty_type:type,slots}).eq("id",id);if(x.error)alert(x.error.message);await load();dutiesModal()}async function deleteDuty(id){if(!confirm("Delete this duty and its assignments?"))return;await sb.from("schedule_duties").delete().eq("id",id);await load();dutiesModal()}
 async function statsModal(){let rows=residents.map(r=>{let ms=morningStats(r),sh=shiftStats(r);return `<tr><td><span class="pill p${r.batch}">${r.batch}</span> ${esc(r.name)}</td><td>${ms.n}</td><td>${Object.entries(ms.by).map(([k,v])=>`${esc(k)}: ${v}`).join("  -  ")||"-"}</td><td>${sh}</td></tr>`}).join("");showModal(`<h2>Statistics - ${monthLabel(currentKey)}</h2><table style="width:100%;border-collapse:collapse"><tr><th>Resident</th><th>Morning total</th><th>Morning breakdown</th><th>24h total</th></tr>${rows}</table><p><button class="secondary" onclick="closeModal()">Close</button></p>`)}
+
+function exportDutiesDoc(){
+  const shown=duties.filter(d=>d.duty_type==="morning");
+  const title=`Cardiology Residents - Morning Duties - ${monthLabel(currentKey)}`;
+  let html=`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+  <style>body{font-family:Arial,sans-serif}h1{font-size:20px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #bbb;padding:5px;text-align:center}th{background:#e8f5f3}td.date{font-weight:700;text-align:left;white-space:nowrap}.r19{background:#d7eaff}.r20{background:#dcf3df}.r21{background:#ffefbf}.r22{background:#f7ddec}.r23{background:#e5defb}</style></head><body><h1>${esc(title)}</h1><table><thead><tr><th>Date</th>`;
+  shown.forEach(d=>html+=`<th>${esc(d.name)}</th>`);
+  html+=`</tr></thead><tbody>`;
+  for(let day=1;day<=daysInMonth(currentKey);day++){
+    html+=`<tr><td class="date">${day} ${dayName(currentKey,day)}</td>`;
+    shown.forEach(d=>{
+      let vals=[];
+      for(let sl=0;sl<d.slots;sl++){
+        let a=findAssign(d.id,sl,day),r=a?.resident_id?residents.find(x=>x.id===a.resident_id):null;
+        vals.push(r?`<span class="r${r.batch}">${esc(r.name)} <small>(${r.batch})</small></span>`:"-");
+      }
+      html+=`<td>${vals.join("<br>")}</td>`;
+    });
+    html+=`</tr>`;
+  }
+  html+=`</tbody></table></body></html>`;
+  const blob=new Blob([html],{type:"application/msword"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+  a.download=`Morning-Duties-${currentKey}.doc`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function exportShiftsPhoto(){
+  const shown=duties.filter(d=>d.duty_type==="24h");
+  const scale=2, cellW=180, dateW=120, rowH=58, headH=72;
+  const width=Math.max(700,(dateW+shown.length*cellW)*scale),height=(headH+daysInMonth(currentKey)*rowH+35)*scale;
+  const canvas=document.createElement("canvas");canvas.width=width;canvas.height=height;
+  const ctx=canvas.getContext("2d");ctx.scale(scale,scale);
+  const W=width/scale,H=height/scale;
+  ctx.fillStyle="#f6f8fb";ctx.fillRect(0,0,W,H);
+  ctx.fillStyle="#26313b";ctx.font="bold 22px Arial";ctx.fillText(`Cardiology Residents - 24-hour Shifts - ${monthLabel(currentKey)}`,18,28);
+  const top=42;
+  ctx.font="bold 13px Arial";ctx.textAlign="center";ctx.textBaseline="middle";
+  ctx.fillStyle="#eef2f5";ctx.fillRect(0,top,dateW,headH);
+  ctx.fillStyle="#26313b";ctx.fillText("Date",dateW/2,top+headH/2);
+  shown.forEach((d,i)=>{
+    const x=dateW+i*cellW;
+    ctx.fillStyle="#f5e9fa";ctx.fillRect(x,top,cellW,headH);
+    ctx.strokeStyle="#dfe5ea";ctx.strokeRect(x,top,cellW,headH);
+    ctx.fillStyle="#26313b";ctx.font="bold 13px Arial";
+    ctx.fillText(d.name,x+cellW/2,top+25);
+    ctx.font="11px Arial";ctx.fillText("24 hour - up to "+d.slots,x+cellW/2,top+48);
+  });
+  for(let day=1;day<=daysInMonth(currentKey);day++){
+    const y=top+headH+(day-1)*rowH,dow=new Date(...currentKey.split("-").map(Number).slice(0,2),day).getDay();
+    ctx.fillStyle=dow===5?"#f8e8ef":"#fff";ctx.fillRect(0,y,dateW,rowH);ctx.strokeStyle="#dfe5ea";ctx.strokeRect(0,y,dateW,rowH);
+    ctx.textAlign="left";ctx.fillStyle="#26313b";ctx.font="bold 15px Arial";ctx.fillText(String(day),10,y+21);
+    ctx.font="12px Arial";ctx.fillStyle="#68707a";ctx.fillText(dayName(currentKey,day),10,y+41);
+    shown.forEach((d,i)=>{
+      const x=dateW+i*cellW;let vals=[];
+      for(let sl=0;sl<d.slots;sl++){let a=findAssign(d.id,sl,day),r=a?.resident_id?residents.find(x=>x.id===a.resident_id):null;vals.push(r);}
+      let yy=y+17;
+      vals.forEach(r=>{
+        if(!r)return;
+        const bg={2019:"#d7eaff",2020:"#dcf3df",2021:"#ffefbf",2022:"#f7ddec",2023:"#e5defb"}[r.batch]||"#fff";
+        ctx.fillStyle=bg;ctx.fillRect(x+5,yy-12,cellW-10,20);
+        ctx.fillStyle="#26313b";ctx.font="12px Arial";ctx.textAlign="center";ctx.fillText(r.name,x+cellW/2,yy-2);yy+=22;
+      });
+      ctx.strokeStyle="#dfe5ea";ctx.strokeRect(x,y,cellW,rowH);
+    });
+  }
+  const a=document.createElement("a");a.href=canvas.toDataURL("image/png");a.download=`24h-Shifts-${currentKey}.png`;a.click();
+}
 function searchModal(){
  let dateOpts=[];
  let [y,m]=currentKey.split("-").map(Number);
