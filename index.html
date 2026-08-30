@@ -100,7 +100,7 @@ function render(){
 }
 function morningStats(r){let as=assignments.filter(a=>a.resident_id===r.id&&duties.find(d=>d.id===a.duty_id)?.duty_type==="morning"),by={};as.forEach(a=>{let d=duties.find(x=>x.id===a.duty_id);if(d)by[d.name]=(by[d.name]||0)+1});return{n:as.length,by}}function shiftStats(r){return assignments.filter(a=>a.resident_id===r.id&&duties.find(d=>d.id===a.duty_id)?.duty_type==="24h").length}
 function renderMiniStats(){let rows=residents.map(r=>{let n=activeTab==="morning"?morningStats(r).n:shiftStats(r);return `<tr><td><span class="pill p${r.batch}">${r.batch}</span> ${esc(r.name)}</td><td>${n}</td></tr>`}).join("");$("miniStats").innerHTML=`<table style="width:100%;border-collapse:collapse"><tr><th>Resident</th><th>${activeTab==="morning"?"Total morning duties":"Total 24-hour shifts"}</th></tr>${rows}</table>`}
-async async function command(){
+async function command(){
  let text=$("command").value.trim();
  let m=text.match(/^(.+?)\s+has\s+(.+?)\s+each\s+(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)$/i);
  if(!m){$("notice").textContent="Use: Resident name has Duty name each Sunday";return}
