@@ -17,7 +17,7 @@
 <div id="app" class="app hidden"><div class="top"><h1> Residents Schedule</h1><select id="month" class="month"></select><button onclick="newMonth()">+ New month</button><button id="resBtn" class="secondary" onclick="residentsModal()">Residents</button><button id="dutyBtn" class="secondary" onclick="dutiesModal()">Duties</button><button id="usersBtn" class="secondary" onclick="usersModal()">Users</button><div class="spacer"></div><span id="role" class="msg"></span><button class="secondary" onclick="signOut()">Sign out</button></div>
 <div class="card"><div class="toolbar"><button onclick="moveMonth(-1)"><</button><button onclick="moveMonth(1)">></button><div class="spacer"></div><button class="secondary" onclick="statsModal()">Statistics</button><button class="secondary" onclick="searchModal()">Search</button><button class="secondary" onclick="exportDutiesDoc()">Export duties to Docs</button><button class="secondary" onclick="exportShiftsPhoto()">Export shifts as photo</button></div></div>
 <div class="tabs"><button id="morningTab" class="tab active" onclick="setTab('morning')">Morning Duties</button><button id="shiftTab" class="tab" onclick="setTab('24h')">24-hour Shifts</button></div>
-<div class="msg" style="margin:-3px 0 9px 2px">Note: Empty cells are allowed. A finalized assignment makes that resident unavailable elsewhere on the same date.</div><div id="commandCard" class="card"><b>Quick command</b><div class="toolbar" style="margin-top:7px"><input id="command" style="flex:1;min-width:260px" placeholder="Arabic or English name has Duty name each Sunday"><button onclick="command()">Apply</button></div><div class="msg">Use either the Arabic or English resident name. Example: Hossam has Smouha cath lab each Sunday</div><div id="notice" class="notice"></div></div>
+<div class="msg" style="margin:-3px 0 9px 2px">Note: Empty cells are allowed. A finalized assignment makes that resident unavailable elsewhere on the same date.</div><div id="commandCard" class="card"><b>Quick command</b><div class="toolbar" style="margin-top:7px"><input id="quickCommandInput" style="flex:1;min-width:260px" placeholder="Arabic or English name has Duty name each Sunday"><button onclick="applyQuickCommand()">Apply</button></div><div class="msg">Use either the Arabic or English resident name. Example: Hossam has Smouha cath lab each Sunday</div><div id="notice" class="notice"></div></div>
 <div id="schedule"></div><div class="card"><b id="statsTitle">Morning-duty totals</b><div id="miniStats" style="margin-top:8px"></div></div></div>
 <div id="modal" class="modal"><div id="modalbox" class="modalbox"></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script>
@@ -131,8 +131,8 @@ function render(){
 }
 function morningStats(r){let as=assignments.filter(a=>a.resident_id===r.id&&duties.find(d=>d.id===a.duty_id)?.duty_type==="morning"),by={};as.forEach(a=>{let d=duties.find(x=>x.id===a.duty_id);if(d)by[d.name]=(by[d.name]||0)+1});return{n:as.length,by}}function shiftStats(r){return assignments.filter(a=>a.resident_id===r.id&&duties.find(d=>d.id===a.duty_id)?.duty_type==="24h").length}
 function renderMiniStats(){let rows=residents.map(r=>{let n=activeTab==="morning"?morningStats(r).n:shiftStats(r);return `<tr><td><span class="pill p${r.batch}">${r.batch}</span> ${esc(r.name)}</td><td>${n}</td></tr>`}).join("");$("miniStats").innerHTML=`<table style="width:100%;border-collapse:collapse"><tr><th>Resident</th><th>${activeTab==="morning"?"Total morning duties":"Total 24-hour shifts"}</th></tr>${rows}</table>`}
-async function command(){
-  const notice=$("notice"), input=$("command");
+async function applyQuickCommand(){
+  const notice=$("notice"), input=$("quickCommandInput");
   const text=input.value.trim();
   const m=text.match(/^(.+?)\s+has\s+(.+?)\s+each\s+([A-Za-z]+)$/i);
   if(!m){notice.textContent="Use: Hossam has Smouha cath lab each Sunday";return}
@@ -338,4 +338,13 @@ function runSearch(mode){
  $("searchResults").innerHTML=out.length?out.join(""):"<div class='msg'>No finalized assignments found.</div>";
 }
 async function usersModal(){let q=await sb.rpc("admin_list_schedule_users");if(q.error){alert(q.error.message);return}let list=(q.data||[]).map(u=>`<div class="row"><span><b>${esc(u.email)}</b></span><select id="role_${u.user_id}"><option value="viewer" ${u.role==="viewer"?"selected":""}>Viewer</option><option value="editor" ${u.role==="editor"?"selected":""}>Editor</option><option value="admin" ${u.role==="admin"?"selected":""}>Admin</option></select><button onclick="changeRole('${esc(u.email)}','${u.user_id}')">Save</button>${u.user_id!==user.id?`<button class="danger" onclick="removeAccess('${esc(u.email)}')">Remove</button>`:""}</div>`).join("");showModal(`<h2>User access</h2><p class="msg">Enter their email and role. They will receive an invitation and can set their password without you using the Supabase dashboard.</p><div class="toolbar"><input id="newUserEmail" type="email" placeholder="Existing account email" style="flex:1"><select id="newUserRole"><option value="viewer">Viewer</option><option value="editor">Editor</option></select><button onclick="addUserRole()">Add / set role</button></div><div>${list||"No users found."}</div><p><button class="secondary" onclick="closeModal()">Done</button></p>`)}async function addUserRole(){let email=$("newUserEmail").value.trim(),r=$("newUserRole").value;if(!email)return;let x=await sb.functions.invoke("invite_schedule_user",{body:{email,role:r}});if(x.error)alert(x.error.message);else if(x.data?.error)alert(x.data.error);else{alert("Invitation sent. They can set their password from the email and then sign in here.");usersModal()}}async function changeRole(email,uid){let r=$("role_"+uid).value,x=await sb.rpc("admin_set_schedule_role",{p_email:email,p_role:r});if(x.error)alert(x.error.message);else usersModal()}async function removeAccess(email){if(!confirm("Remove this person's schedule access?"))return;let x=await sb.rpc("admin_remove_schedule_access",{p_email:email});if(x.error)alert(x.error.message);else usersModal()}
+
+function bindQuickCommand(){
+  const input=$("quickCommandInput");
+  const button=document.querySelector("#commandCard button");
+  if(!input||!button)return;
+  button.onclick=()=>applyQuickCommand();
+  input.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();applyQuickCommand();}});
+}
+bindQuickCommand();
 </script></body></html>
