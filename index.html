@@ -17,7 +17,7 @@
 <div id="app" class="app hidden"><div class="top"><h1> Residents Schedule</h1><select id="month" class="month"></select><button onclick="newMonth()">+ New month</button><button id="resBtn" class="secondary" onclick="residentsModal()">Residents</button><button id="dutyBtn" class="secondary" onclick="dutiesModal()">Duties</button><button id="usersBtn" class="secondary" onclick="usersModal()">Users</button><div class="spacer"></div><span id="role" class="msg"></span><button class="secondary" onclick="signOut()">Sign out</button></div>
 <div class="card"><div class="toolbar"><button onclick="moveMonth(-1)"><</button><button onclick="moveMonth(1)">></button><div class="spacer"></div><button class="secondary" onclick="statsModal()">Statistics</button><button class="secondary" onclick="searchModal()">Search</button><button class="secondary" onclick="exportDutiesDoc()">Export duties to Docs</button><button class="secondary" onclick="exportShiftsPhoto()">Export shifts as photo</button></div></div>
 <div class="tabs"><button id="morningTab" class="tab active" onclick="setTab('morning')">Morning Duties</button><button id="shiftTab" class="tab" onclick="setTab('24h')">24-hour Shifts</button></div>
-<div class="msg" style="margin:-3px 0 9px 2px">Note: Empty cells are allowed. A finalized assignment makes that resident unavailable elsewhere on the same date.</div><div id="commandCard" class="card"><b>Quick command</b><div class="toolbar" style="margin-top:7px"><input id="quickCommandInput" style="flex:1;min-width:260px" placeholder="Arabic or English name has Duty name each Sunday"><button onclick="applyQuickCommand()">Apply</button></div><div class="msg">Use either the Arabic or English resident name. Example: Hossam has Smouha cath lab each Sunday</div><div id="notice" class="notice"></div></div>
+<div class="msg" style="margin:-3px 0 9px 2px">Note: Empty cells are allowed. A finalized assignment makes that resident unavailable elsewhere on the same date.</div><div class="card"><b>Morning duty rules</b><div class="msg" style="margin-top:6px">Thursday: only Advanced echo/stress ECG/holter, Clinic echo, Clinic, Smouha cath lab, EP, and Smouha echo/clinic. Nariman clinic: Saturday, Monday, Wednesday. Pregnancy clinic: Wednesday. Borg elarab clinic: Sunday.</div></div><div id="commandCard" class="card"><b>Quick command</b><div class="toolbar" style="margin-top:7px"><input id="quickCommandInput" style="flex:1;min-width:260px" placeholder="Arabic or English name has Duty name each Sunday"><button onclick="applyQuickCommand()">Apply</button></div><div class="msg">Use either the Arabic or English resident name. Example: Hossam has Smouha cath lab each Sunday</div><div id="notice" class="notice"></div></div>
 <div id="schedule"></div><div class="card"><b id="statsTitle">Morning-duty totals</b><div id="miniStats" style="margin-top:8px"></div></div></div>
 <div id="modal" class="modal"><div id="modalbox" class="modalbox"></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script>
@@ -68,10 +68,19 @@ residents.sort((a,b)=>{
 duties=(a[1].data||[]).filter(d=>String(d.name??"").trim().toLocaleLowerCase()!=="angina unit");months=a[2].data||[];if(!months.some(m=>m.month_key===currentKey)&&canEdit()){await sb.from("schedule_months").insert({month_key:currentKey});let x=await sb.from("schedule_months").select("*").order("month_key");months=x.data||[]}if(!months.some(m=>m.month_key===currentKey))currentKey=months[months.length-1]?.month_key||currentKey;$("month").innerHTML=months.map(m=>`<option value="${m.month_key}">${monthLabel(m.month_key)}</option>`).join("");$("month").value=currentKey;$("month").onchange=async()=>{currentKey=$("month").value;await loadAssignments();render()};await loadAssignments();render()}
 async function loadAssignments(){let m=months.find(x=>x.month_key===currentKey);if(!m){assignments=[];return}let x=await sb.from("schedule_assignments").select("*").eq("month_id",m.id);assignments=x.data||[]}function getMonthId(){return months.find(x=>x.month_key===currentKey)?.id}function occupied(day){return assignments.filter(a=>a.day===day&&a.resident_id).map(a=>a.resident_id)}function findAssign(did,slot,day){return assignments.find(a=>a.duty_id===did&&a.slot===slot&&a.day===day)}
 function residentRank(r){return residents.indexOf(r)}
+const MORNING_THURSDAY_ONLY=new Set([
+  "advanced echo/stress ecg/holter",
+  "clinic echo",
+  "clinic",
+  "smouha cath lab",
+  "ep",
+  "smouha echo/clinic",
+  "smouha echo"
+]);
 function dutyAllowedOnDow(d,dow){
-  const name=String(d?.name||"").trim().toLocaleLowerCase();
+  const name=String(d?.name||"").normalize("NFC").replace(/\s+/g," ").trim().toLocaleLowerCase();
   if(d?.duty_type==="morning" && dow===4){
-    return new Set(["advanced echo/stress ecg/holter","clinic echo","clinic","smouha cath lab","ep","smouha echo/clinic"]).has(name);
+    return MORNING_THURSDAY_ONLY.has(name);
   }
   if(name==="nariman clinic") return [1,3,6].includes(dow);
   if(name==="pregnancy clinic") return dow===3;
@@ -94,6 +103,13 @@ function orderedSlots(d,day){
 }
 async function setAssign(did,slot,day,rid,renderAfter=true){
   if(!canEdit())return false;
+  const duty=duties.find(x=>x.id===did);
+  const [yy,mm]=currentKey.split("-").map(Number);
+  const dow=new Date(yy,mm-1,day).getDay();
+  if(duty && !dutyAllowedOnDow(duty,dow)){
+    if(renderAfter)alert(`${duty.name} is not scheduled on ${dayName(currentKey,day)}.`);
+    return false;
+  }
   const old=findAssign(did,slot,day);
   const taken=occupied(day).filter(x=>x!==old?.resident_id);
   if(rid&&taken.includes(rid))return false;
@@ -149,7 +165,7 @@ function render(){
    shown.forEach(d=>{
      let cell=document.createElement("td");
      if(!dutyAllowedOnDay(d,day)){
-       cell.innerHTML='<span class="msg">—</span>';
+       cell.innerHTML='<span class="msg">Not scheduled</span>';
        cell.style.background="#f3f5f7";
        cell.style.color="#a0a8b0";
        row.appendChild(cell);
