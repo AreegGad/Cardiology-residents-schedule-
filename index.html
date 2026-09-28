@@ -68,6 +68,15 @@ residents.sort((a,b)=>{
 duties=(a[1].data||[]).filter(d=>String(d.name??"").trim().toLocaleLowerCase()!=="angina unit");months=a[2].data||[];if(!months.some(m=>m.month_key===currentKey)&&canEdit()){await sb.from("schedule_months").insert({month_key:currentKey});let x=await sb.from("schedule_months").select("*").order("month_key");months=x.data||[]}if(!months.some(m=>m.month_key===currentKey))currentKey=months[months.length-1]?.month_key||currentKey;$("month").innerHTML=months.map(m=>`<option value="${m.month_key}">${monthLabel(m.month_key)}</option>`).join("");$("month").value=currentKey;$("month").onchange=async()=>{currentKey=$("month").value;await loadAssignments();render()};await loadAssignments();render()}
 async function loadAssignments(){let m=months.find(x=>x.month_key===currentKey);if(!m){assignments=[];return}let x=await sb.from("schedule_assignments").select("*").eq("month_id",m.id);assignments=x.data||[]}function getMonthId(){return months.find(x=>x.month_key===currentKey)?.id}function occupied(day){return assignments.filter(a=>a.day===day&&a.resident_id).map(a=>a.resident_id)}function findAssign(did,slot,day){return assignments.find(a=>a.duty_id===did&&a.slot===slot&&a.day===day)}
 function residentRank(r){return residents.indexOf(r)}
+function dutyAllowedOnDay(d,day){
+  const [yy,mm]=currentKey.split("-").map(Number);
+  const dow=new Date(yy,mm-1,day).getDay();
+  const name=String(d?.name||"").trim().toLocaleLowerCase();
+  if(name==="nariman clinic") return [1,3,6].includes(dow);
+  if(name==="pregnancy clinic") return dow===3;
+  if(name==="borg elarab clinic") return dow===0;
+  return true;
+}
 function orderedSlots(d,day){
   return Array.from({length:d.slots},(_,slot)=>({slot,a:findAssign(d.id,slot,day)})).sort((x,y)=>{
     const rx=x.a?.resident_id?residents.find(r=>r.id===x.a.resident_id):null;
@@ -134,6 +143,13 @@ function render(){
    row.innerHTML=`<td><b>${day}</b><small style="display:block;color:#68707a">${dayName(currentKey,day)}</small></td>`;
    shown.forEach(d=>{
      let cell=document.createElement("td");
+     if(!dutyAllowedOnDay(d,day)){
+       cell.innerHTML='<span class="msg">—</span>';
+       cell.style.background="#f3f5f7";
+       cell.style.color="#a0a8b0";
+       row.appendChild(cell);
+       return;
+     }
      for(const item of orderedSlots(d,day)){
        const sl=item.slot;
        let sel=document.createElement("select");sel.className="assign";sel.disabled=!canEdit();
@@ -193,6 +209,14 @@ async function applyQuickCommand(){
   const monthId=getMonthId();
   if(!monthId){notice.textContent="No month is selected.";return}
 
+  const testDay=new Date(Number(currentKey.split("-")[0]),Number(currentKey.split("-")[1])-1,1);
+  const dutyName=String(d.name||"").trim().toLocaleLowerCase();
+  const allowedWeekdays=dutyName==="nariman clinic"?[1,3,6]:dutyName==="pregnancy clinic"?[3]:dutyName==="borg elarab clinic"?[0]:[0,1,2,3,4,5,6];
+  if(!allowedWeekdays.includes(weekday)){
+    notice.textContent=`${d.name} is not scheduled on ${m[3]}.`;
+    return;
+  }
+
   notice.textContent=`Applying ${r.english_name||r.name} to ${d.name} every ${m[3]}...`;
   const result=await sb.rpc("quick_assign_schedule",{
     p_month_id:monthId,
@@ -205,6 +229,10 @@ async function applyQuickCommand(){
     return;
   }
 
+  if(result.data?.not_scheduled){
+    notice.textContent=`${d.name} is not scheduled on ${m[3]}.`;
+    return;
+  }
   await loadAssignments();
   const sy=window.scrollY, wrap=document.querySelector(".table-wrap"), st=wrap?.scrollTop||0, sl=wrap?.scrollLeft||0;
   render();
@@ -262,6 +290,7 @@ function exportDutiesDoc(){
     html+=`<tr><td class="date">${day} ${dayName(currentKey,day)}</td>`;
     shown.forEach(d=>{
       let vals=[];
+      if(!dutyAllowedOnDay(d,day)){html+=`<td>—</td>`;return}
       for(const item of orderedSlots(d,day)){
         let a=item.a,r=a?.resident_id?residents.find(x=>x.id===a.resident_id):null;
         vals.push(r?`<span class="r${r.batch}">${esc(r.name)} <small>(${r.batch})</small></span>`:"-");
