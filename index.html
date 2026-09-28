@@ -45,9 +45,39 @@ function togglePassword(){let p=$("password"),b=document.querySelector(".eye");p
 }
 async function signOut(){await sb.auth.signOut()}
 sb.auth.onAuthStateChange(async(_,session)=>{user=session?.user||null;if(user){$("login").classList.add("hidden");$("app").classList.remove("hidden");await load()}else{$("app").classList.add("hidden");$("login").classList.remove("hidden")}});
-async function load(){let r=await sb.from("schedule_user_roles").select("role").eq("user_id",user.id).maybeSingle();role=r.data?.role||"viewer";$("role").textContent=`${role[0].toUpperCase()+role.slice(1)}  -  ${user.email}`;["resBtn","dutyBtn","usersBtn","commandCard"].forEach(id=>$(id).style.display=(id==="commandCard"?canEdit():isAdmin())?"":"none");let a=await Promise.all([sb.from("schedule_residents").select("*").order("batch").order("created_at"),sb.from("schedule_duties").select("*").order("created_at"),sb.from("schedule_months").select("*").order("month_key")]);residents=a[0].data||[];residents.sort((a,b)=>BATCHES.indexOf(a.batch)-BATCHES.indexOf(b.batch));duties=(a[1].data||[]).filter(d=>String(d.name??"").trim().toLocaleLowerCase()!=="angina unit");months=a[2].data||[];if(!months.some(m=>m.month_key===currentKey)&&canEdit()){await sb.from("schedule_months").insert({month_key:currentKey});let x=await sb.from("schedule_months").select("*").order("month_key");months=x.data||[]}if(!months.some(m=>m.month_key===currentKey))currentKey=months[months.length-1]?.month_key||currentKey;$("month").innerHTML=months.map(m=>`<option value="${m.month_key}">${monthLabel(m.month_key)}</option>`).join("");$("month").value=currentKey;$("month").onchange=async()=>{currentKey=$("month").value;await loadAssignments();render()};await loadAssignments();render()}
+async function load(){let r=await sb.from("schedule_user_roles").select("role").eq("user_id",user.id).maybeSingle();role=r.data?.role||"viewer";$("role").textContent=`${role[0].toUpperCase()+role.slice(1)}  -  ${user.email}`;["resBtn","dutyBtn","usersBtn","commandCard"].forEach(id=>$(id).style.display=(id==="commandCard"?canEdit():isAdmin())?"":"none");let a=await Promise.all([sb.from("schedule_residents").select("*").order("batch").order("created_at"),sb.from("schedule_duties").select("*").order("created_at"),sb.from("schedule_months").select("*").order("month_key")]);residents=a[0].data||[];
+const priority=(r)=>{
+  const key=String(r.english_name||r.name||"").trim().toLocaleLowerCase();
+  const batch=String(r.batch);
+  const preferred={
+    "2020":[["mina","مينا"],["hossam","حسام"]],
+    "2021":[["areeg","أريج"],["shahawy","شهاوي","الشاعر","elshaer"],["mariam","مريم"]],
+    "2022":[["marzouk","مرزوق"]]
+  };
+  const list=preferred[batch]||[];
+  for(let i=0;i<list.length;i++) if(list[i].includes(key)) return i;
+  return list.length+1;
+};
+residents.sort((a,b)=>{
+  const ab=BATCHES.indexOf(a.batch)-BATCHES.indexOf(b.batch);
+  if(ab)return ab;
+  const ap=priority(a)-priority(b);
+  if(ap)return ap;
+  return String(a.english_name||a.name||"").localeCompare(String(b.english_name||b.name||""));
+});
+duties=(a[1].data||[]).filter(d=>String(d.name??"").trim().toLocaleLowerCase()!=="angina unit");months=a[2].data||[];if(!months.some(m=>m.month_key===currentKey)&&canEdit()){await sb.from("schedule_months").insert({month_key:currentKey});let x=await sb.from("schedule_months").select("*").order("month_key");months=x.data||[]}if(!months.some(m=>m.month_key===currentKey))currentKey=months[months.length-1]?.month_key||currentKey;$("month").innerHTML=months.map(m=>`<option value="${m.month_key}">${monthLabel(m.month_key)}</option>`).join("");$("month").value=currentKey;$("month").onchange=async()=>{currentKey=$("month").value;await loadAssignments();render()};await loadAssignments();render()}
 async function loadAssignments(){let m=months.find(x=>x.month_key===currentKey);if(!m){assignments=[];return}let x=await sb.from("schedule_assignments").select("*").eq("month_id",m.id);assignments=x.data||[]}function getMonthId(){return months.find(x=>x.month_key===currentKey)?.id}function occupied(day){return assignments.filter(a=>a.day===day&&a.resident_id).map(a=>a.resident_id)}function findAssign(did,slot,day){return assignments.find(a=>a.duty_id===did&&a.slot===slot&&a.day===day)}
-function orderedSlots(d,day){return Array.from({length:d.slots},(_,slot)=>({slot,a:findAssign(d.id,slot,day)})).sort((x,y)=>{const rx=x.a?.resident_id?residents.find(r=>r.id===x.a.resident_id):null;const ry=y.a?.resident_id?residents.find(r=>r.id===y.a.resident_id):null;if(!rx&&!ry)return x.slot-y.slot;if(!rx)return 1;if(!ry)return -1;const b=Number(rx.batch)-Number(ry.batch);return b||String(rx.name).localeCompare(String(ry.name),"ar")||x.slot-y.slot})}
+function residentRank(r){return residents.indexOf(r)}
+function orderedSlots(d,day){
+  return Array.from({length:d.slots},(_,slot)=>({slot,a:findAssign(d.id,slot,day)})).sort((x,y)=>{
+    const rx=x.a?.resident_id?residents.find(r=>r.id===x.a.resident_id):null;
+    const ry=y.a?.resident_id?residents.find(r=>r.id===y.a.resident_id):null;
+    if(!rx&&!ry)return x.slot-y.slot;
+    if(!rx)return 1;
+    if(!ry)return -1;
+    return residentRank(rx)-residentRank(ry)||x.slot-y.slot;
+  });
+}
 async function setAssign(did,slot,day,rid,renderAfter=true){
   if(!canEdit())return false;
   const old=findAssign(did,slot,day);
