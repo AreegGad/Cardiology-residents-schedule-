@@ -17,7 +17,7 @@
 <div id="app" class="app hidden"><div class="top"><h1> Residents Schedule</h1><select id="month" class="month"></select><button onclick="newMonth()">+ New month</button><button id="resBtn" class="secondary" onclick="residentsModal()">Residents</button><button id="dutyBtn" class="secondary" onclick="dutiesModal()">Duties</button><button id="usersBtn" class="secondary" onclick="usersModal()">Users</button><div class="spacer"></div><span id="role" class="msg"></span><button class="secondary" onclick="signOut()">Sign out</button></div>
 <div class="card"><div class="toolbar"><button onclick="moveMonth(-1)"><</button><button onclick="moveMonth(1)">></button><div class="spacer"></div><button class="secondary" onclick="statsModal()">Statistics</button><button class="secondary" onclick="searchModal()">Search</button><button class="secondary" onclick="exportDutiesDoc()">Export duties to Docs</button><button class="secondary" onclick="exportShiftsPhoto()">Export shifts as photo</button></div></div>
 <div class="tabs"><button id="morningTab" class="tab active" onclick="setTab('morning')">Morning Duties</button><button id="shiftTab" class="tab" onclick="setTab('24h')">24-hour Shifts</button></div>
-<div class="msg" style="margin:-3px 0 9px 2px">Note: Empty cells are allowed. A finalized assignment makes that resident unavailable elsewhere on the same date.</div><div id="commandCard" class="card"><b>Quick command</b><div class="toolbar" style="margin-top:7px"><input id="command" style="flex:1;min-width:260px" placeholder="Hossam has Smouha cath lab each Sunday"><button onclick="command()">Apply</button></div><div class="msg">Example: [Resident] has [Duty] each [weekday]</div><div id="notice" class="notice"></div></div>
+<div class="msg" style="margin:-3px 0 9px 2px">Note: Empty cells are allowed. A finalized assignment makes that resident unavailable elsewhere on the same date.</div><div id="commandCard" class="card"><b>Quick command</b><div class="toolbar" style="margin-top:7px"><input id="command" style="flex:1;min-width:260px" placeholder="Arabic or English name has Duty name each Sunday"><button onclick="command()">Apply</button></div><div class="msg">Use either the Arabic or English resident name. Example: Hossam has Smouha cath lab each Sunday</div><div id="notice" class="notice"></div></div>
 <div id="schedule"></div><div class="card"><b id="statsTitle">Morning-duty totals</b><div id="miniStats" style="margin-top:8px"></div></div></div>
 <div id="modal" class="modal"><div id="modalbox" class="modalbox"></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script>
@@ -132,37 +132,61 @@ function render(){
 function morningStats(r){let as=assignments.filter(a=>a.resident_id===r.id&&duties.find(d=>d.id===a.duty_id)?.duty_type==="morning"),by={};as.forEach(a=>{let d=duties.find(x=>x.id===a.duty_id);if(d)by[d.name]=(by[d.name]||0)+1});return{n:as.length,by}}function shiftStats(r){return assignments.filter(a=>a.resident_id===r.id&&duties.find(d=>d.id===a.duty_id)?.duty_type==="24h").length}
 function renderMiniStats(){let rows=residents.map(r=>{let n=activeTab==="morning"?morningStats(r).n:shiftStats(r);return `<tr><td><span class="pill p${r.batch}">${r.batch}</span> ${esc(r.name)}</td><td>${n}</td></tr>`}).join("");$("miniStats").innerHTML=`<table style="width:100%;border-collapse:collapse"><tr><th>Resident</th><th>${activeTab==="morning"?"Total morning duties":"Total 24-hour shifts"}</th></tr>${rows}</table>`}
 async function command(){
-  const notice=$("notice"),text=$("command").value.trim();
-  const dayMap={sunday:0,monday:1,tuesday:2,wednesday:3,thursday:4,friday:5,saturday:6,sun:0,mon:1,tue:2,tues:2,wed:3,thu:4,thur:4,thurs:4,fri:5,sat:6};
+  const notice=$("notice"), input=$("command");
+  const text=input.value.trim();
   const m=text.match(/^(.+?)\s+has\s+(.+?)\s+each\s+([A-Za-z]+)$/i);
   if(!m){notice.textContent="Use: Hossam has Smouha cath lab each Sunday";return}
-  const norm=v=>String(v??"").normalize("NFC").replace(/\s+/g," ").trim().toLocaleLowerCase();
-  const clean=v=>norm(v).replace(/[“”"'`]/g,"").replace(/[.,;:!?]+$/g,"").trim();
-  const rKey=clean(m[1]),dKey=clean(m[2]),dayKey=clean(m[3]);
-  const residentMatches=residents.filter(r=>clean(r.name)===rKey||clean(r.english_name)===rKey);
-  const findOne=(items,key)=>{const exact=items.find(x=>clean(x.name)===key);if(exact)return exact;const matches=items.filter(x=>{const n=clean(x.name);return n.includes(key)||key.includes(n)});return matches.length===1?matches[0]:null};
-  const r=residentMatches.length===1?residentMatches[0]:(residentMatches.length>1?null:findOne(residents,rKey));
-  const d=findOne(duties,dKey),wd=dayMap[dayKey];
-  if(wd===undefined){notice.textContent="I don't recognize that weekday.";return}
-  if(!r){notice.textContent="Resident not found. Use the Arabic or English name saved for the resident.";return}
-  if(!d){notice.textContent="Duty not found. Use the duty name shown in Duties.";return}
+
+  const normalize=v=>String(v??"").normalize("NFC").replace(/\s+/g," ").trim().toLocaleLowerCase();
+  const clean=v=>normalize(v).replace(/[“”"'`]/g,"").replace(/[.,;:!?]+$/g,"").trim();
+  const residentKey=clean(m[1]);
+  const dutyKey=clean(m[2]);
+  const dayKey=clean(m[3]);
+  const dayMap={sunday:0,monday:1,tuesday:2,wednesday:3,thursday:4,friday:5,saturday:6,sun:0,mon:1,tue:2,tues:2,wed:3,thu:4,thur:4,thurs:4,fri:5,sat:6};
+  const weekday=dayMap[dayKey];
+  if(weekday===undefined){notice.textContent="I don't recognize that weekday.";return}
+
+  const residentMatches=residents.filter(r=>clean(r.name)===residentKey||clean(r.english_name)===residentKey);
+  const partialMatches=residents.filter(r=>{
+    const names=[r.name,r.english_name].filter(Boolean).map(clean);
+    return names.some(n=>n.includes(residentKey)||residentKey.includes(n));
+  });
+  const r=residentMatches.length===1?residentMatches[0]:(residentMatches.length>1?null:(partialMatches.length===1?partialMatches[0]:null));
+  if(!r){notice.textContent="Resident not found. Use the exact Arabic or English name saved in Residents.";return}
+
+  const dutyExact=duties.find(d=>clean(d.name)===dutyKey);
+  const dutyPartial=duties.filter(d=>{const n=clean(d.name);return n.includes(dutyKey)||dutyKey.includes(n)});
+  const d=dutyExact||(dutyPartial.length===1?dutyPartial[0]:null);
+  if(!d){notice.textContent="Duty not found. Use the exact duty name shown in Duties.";return}
   if(!canEdit()){notice.textContent="You need Editor or Admin access to use Quick command.";return}
-  const sy=window.scrollY,wrap=document.querySelector(".table-wrap"),st=wrap?.scrollTop||0,sl=wrap?.scrollLeft||0;
-  let changed=0,skip=0,errors=[];const [y,mo]=currentKey.split("-").map(Number);
-  for(let day=1;day<=daysInMonth(currentKey);day++){
-    if(new Date(y,mo-1,day).getDay()!==wd)continue;
-    let slot=-1;
-    for(let ss=0;ss<d.slots;ss++){
-      const a=findAssign(d.id,ss,day);
-      if(a?.resident_id===r.id){slot=ss;break}
-      const taken=occupied(day).filter(id=>id!==a?.resident_id);
-      if(!taken.includes(r.id)){slot=ss;break}
-    }
-    if(slot<0){skip++;continue}
-    const ok=await setAssign(d.id,slot,day,r.id,false);if(ok)changed++;else errors.push(String(day));
+
+  const monthId=getMonthId();
+  if(!monthId){notice.textContent="No month is selected.";return}
+
+  notice.textContent=`Applying ${r.english_name||r.name} to ${d.name} every ${m[3]}...`;
+  const result=await sb.rpc("quick_assign_schedule",{
+    p_month_id:monthId,
+    p_duty_id:d.id,
+    p_resident_id:r.id,
+    p_weekday:weekday
+  });
+  if(result.error){
+    notice.textContent=`Quick command failed: ${result.error.message}`;
+    return;
   }
-  await loadAssignments();render();requestAnimationFrame(()=>{window.scrollTo(0,sy);const w=document.querySelector(".table-wrap");if(w){w.scrollTop=st;w.scrollLeft=sl}});
-  notice.textContent=errors.length?`Applied ${changed} time(s); save failed on day(s): ${errors.join(", ")}.`:`Applied ${changed} time(s)${skip?`; ${skip} conflict(s) skipped.`:"."}`;
+
+  await loadAssignments();
+  const sy=window.scrollY, wrap=document.querySelector(".table-wrap"), st=wrap?.scrollTop||0, sl=wrap?.scrollLeft||0;
+  render();
+  requestAnimationFrame(()=>{
+    document.documentElement.style.scrollBehavior="auto";
+    window.scrollTo(0,sy);
+    const w=document.querySelector(".table-wrap");
+    if(w){w.scrollTop=st;w.scrollLeft=sl}
+    document.documentElement.style.scrollBehavior="smooth";
+  });
+  const summary=result.data||{};
+  notice.textContent=`Applied ${Number(summary.changed||0)} time(s)${Number(summary.skipped||0)?`; ${Number(summary.skipped)} conflict(s) skipped.`:"."}`;
 }
 function findDutyForCommand(key){const exact=duties.find(x=>String(x.name).normalize("NFC").trim().toLocaleLowerCase()===key);if(exact)return exact;const matches=duties.filter(x=>{const n=String(x.name).normalize("NFC").trim().toLocaleLowerCase();return n.includes(key)||key.includes(n)});return matches.length===1?matches[0]:null}
 
