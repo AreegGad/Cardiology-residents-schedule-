@@ -25,7 +25,25 @@ const SUPABASE_URL="https://ncvampqtqrfziwoqvxjq.supabase.co",SUPABASE_KEY="sb_p
 const BATCHES=["2019","2020","2021","2022","2023"],DAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];let user=null,role="viewer",residents=[],duties=[],months=[],assignments=[],currentKey=new Date().toISOString().slice(0,7),activeTab="morning";
 const $=id=>document.getElementById(id),esc=s=>String(s??"").replace(/[&<>"\']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","\'":"&#39;"}[c]));;
 function monthLabel(k){let[y,m]=k.split("-").map(Number);return new Date(y,m-1,1).toLocaleString(undefined,{month:"long",year:"numeric"})}function daysInMonth(k){let[y,m]=k.split("-").map(Number);return new Date(y,m,0).getDate()}function dayName(k,d){let[y,m]=k.split("-").map(Number);return DAYS[new Date(y,m-1,d).getDay()]}function canEdit(){return role==="admin"||role==="editor"}function isAdmin(){return role==="admin"}
-function togglePassword(){let p=$("password"),b=document.querySelector(".eye");p.type=p.type==="password"?"text":"password";b.textContent=p.type==="password"?"Show":"Hide"}async function signIn(){let e=$("email").value.trim(),p=$("password").value;$("loginMsg").textContent="Signing in...";let{error}=await sb.auth.signInWithPassword({email:e,password:p});if(error){$("loginMsg").textContent=error.message;return}if(!$("remember").checked){await sb.auth.setSession({access_token:"",refresh_token:""})}$("loginMsg").textContent=""}async function signOut(){await sb.auth.signOut()}
+function togglePassword(){let p=$("password"),b=document.querySelector(".eye");p.type=p.type==="password"?"text":"password";b.textContent=p.type==="password"?"Show":"Hide"}async function signIn(){
+  const email=$("email").value.trim(), password=$("password").value;
+  const msg=$("loginMsg");
+  if(!email||!password){msg.textContent="Please enter your email and password.";return}
+  msg.textContent="Signing in...";
+  try{
+    if(!window.supabase||!sb){throw new Error("The sign-in service did not load. Please refresh the page and try again.")}
+    const result=await sb.auth.signInWithPassword({email,password});
+    if(result.error){msg.textContent=result.error.message;return}
+    msg.textContent="Signed in. Loading schedule...";
+    const sessionResult=await sb.auth.getSession();
+    if(!sessionResult.data?.session){msg.textContent="Sign-in did not create a session. Please try again.";return}
+    // Keep the normal Supabase session. The old code attempted to clear it
+    // when "Keep me signed in" was unchecked, which could immediately log out.
+  }catch(err){
+    msg.textContent=err?.message||"Could not sign in. Please try again.";
+  }
+}
+async function signOut(){await sb.auth.signOut()}
 sb.auth.onAuthStateChange(async(_,session)=>{user=session?.user||null;if(user){$("login").classList.add("hidden");$("app").classList.remove("hidden");await load()}else{$("app").classList.add("hidden");$("login").classList.remove("hidden")}});
 async function load(){let r=await sb.from("schedule_user_roles").select("role").eq("user_id",user.id).maybeSingle();role=r.data?.role||"viewer";$("role").textContent=`${role[0].toUpperCase()+role.slice(1)}  -  ${user.email}`;["resBtn","dutyBtn","usersBtn","commandCard"].forEach(id=>$(id).style.display=(id==="commandCard"?canEdit():isAdmin())?"":"none");let a=await Promise.all([sb.from("schedule_residents").select("*").order("batch").order("created_at"),sb.from("schedule_duties").select("*").order("created_at"),sb.from("schedule_months").select("*").order("month_key")]);residents=a[0].data||[];residents.sort((a,b)=>BATCHES.indexOf(a.batch)-BATCHES.indexOf(b.batch));duties=(a[1].data||[]).filter(d=>String(d.name??"").trim().toLocaleLowerCase()!=="angina unit");months=a[2].data||[];if(!months.some(m=>m.month_key===currentKey)&&canEdit()){await sb.from("schedule_months").insert({month_key:currentKey});let x=await sb.from("schedule_months").select("*").order("month_key");months=x.data||[]}if(!months.some(m=>m.month_key===currentKey))currentKey=months[months.length-1]?.month_key||currentKey;$("month").innerHTML=months.map(m=>`<option value="${m.month_key}">${monthLabel(m.month_key)}</option>`).join("");$("month").value=currentKey;$("month").onchange=async()=>{currentKey=$("month").value;await loadAssignments();render()};await loadAssignments();render()}
 async function loadAssignments(){let m=months.find(x=>x.month_key===currentKey);if(!m){assignments=[];return}let x=await sb.from("schedule_assignments").select("*").eq("month_id",m.id);assignments=x.data||[]}function getMonthId(){return months.find(x=>x.month_key===currentKey)?.id}function occupied(day){return assignments.filter(a=>a.day===day&&a.resident_id).map(a=>a.resident_id)}function findAssign(did,slot,day){return assignments.find(a=>a.duty_id===did&&a.slot===slot&&a.day===day)}
