@@ -47,19 +47,18 @@ async function signOut(){await sb.auth.signOut()}
 sb.auth.onAuthStateChange(async(_,session)=>{user=session?.user||null;if(user){$("login").classList.add("hidden");$("app").classList.remove("hidden");await load()}else{$("app").classList.add("hidden");$("login").classList.remove("hidden")}});
 async function load(){let r=await sb.from("schedule_user_roles").select("role").eq("user_id",user.id).maybeSingle();role=r.data?.role||"viewer";$("role").textContent=`${role[0].toUpperCase()+role.slice(1)}  -  ${user.email}`;["resBtn","dutyBtn","usersBtn","commandCard"].forEach(id=>$(id).style.display=(id==="commandCard"?canEdit():isAdmin())?"":"none");let a=await Promise.all([sb.from("schedule_residents").select("*").order("batch").order("created_at"),sb.from("schedule_duties").select("*").order("created_at"),sb.from("schedule_months").select("*").order("month_key")]);residents=a[0].data||[];residents.sort((a,b)=>BATCHES.indexOf(a.batch)-BATCHES.indexOf(b.batch));duties=(a[1].data||[]).filter(d=>String(d.name??"").trim().toLocaleLowerCase()!=="angina unit");months=a[2].data||[];if(!months.some(m=>m.month_key===currentKey)&&canEdit()){await sb.from("schedule_months").insert({month_key:currentKey});let x=await sb.from("schedule_months").select("*").order("month_key");months=x.data||[]}if(!months.some(m=>m.month_key===currentKey))currentKey=months[months.length-1]?.month_key||currentKey;$("month").innerHTML=months.map(m=>`<option value="${m.month_key}">${monthLabel(m.month_key)}</option>`).join("");$("month").value=currentKey;$("month").onchange=async()=>{currentKey=$("month").value;await loadAssignments();render()};await loadAssignments();render()}
 async function loadAssignments(){let m=months.find(x=>x.month_key===currentKey);if(!m){assignments=[];return}let x=await sb.from("schedule_assignments").select("*").eq("month_id",m.id);assignments=x.data||[]}function getMonthId(){return months.find(x=>x.month_key===currentKey)?.id}function occupied(day){return assignments.filter(a=>a.day===day&&a.resident_id).map(a=>a.resident_id)}function findAssign(did,slot,day){return assignments.find(a=>a.duty_id===did&&a.slot===slot&&a.day===day)}
-async function setAssign(did,slot,day,rid){
-  if(!canEdit())return;
-  const scrollY=window.scrollY;
-  const wrap=document.querySelector(".table-wrap");
-  const wrapScrollTop=wrap?.scrollTop||0,wrapScrollLeft=wrap?.scrollLeft||0;
-  let old=findAssign(did,slot,day),taken=occupied(day).filter(x=>x!==old?.resident_id);
-  if(rid&&taken.includes(rid)){alert("That resident is already assigned somewhere else on this date.");render();requestAnimationFrame(()=>{window.scrollTo(0,scrollY);const w=document.querySelector(".table-wrap");if(w){w.scrollTop=wrapScrollTop;w.scrollLeft=wrapScrollLeft}});return}
-  let x;
-  if(old)x=await sb.from("schedule_assignments").update({resident_id:rid||null}).eq("id",old.id);
-  else if(rid)x=await sb.from("schedule_assignments").insert({month_id:getMonthId(),duty_id:did,slot,day,resident_id:rid});
-  if(x?.error){alert(x.error.message);return}
-  await loadAssignments();render();
-  requestAnimationFrame(()=>{window.scrollTo(0,scrollY);const w=document.querySelector(".table-wrap");if(w){w.scrollTop=wrapScrollTop;w.scrollLeft=wrapScrollLeft}});
+function orderedSlots(d,day){return Array.from({length:d.slots},(_,slot)=>({slot,a:findAssign(d.id,slot,day)})).sort((x,y)=>{const rx=x.a?.resident_id?residents.find(r=>r.id===x.a.resident_id):null;const ry=y.a?.resident_id?residents.find(r=>r.id===y.a.resident_id):null;if(!rx&&!ry)return x.slot-y.slot;if(!rx)return 1;if(!ry)return -1;const b=Number(rx.batch)-Number(ry.batch);return b||String(rx.name).localeCompare(String(ry.name),"ar")||x.slot-y.slot})}
+async function setAssign(did,slot,day,rid,renderAfter=true){
+  if(!canEdit())return false;
+  const old=findAssign(did,slot,day);
+  const taken=occupied(day).filter(x=>x!==old?.resident_id);
+  if(rid&&taken.includes(rid))return false;
+  let q;
+  if(old) q=await sb.from("schedule_assignments").update({resident_id:rid||null}).eq("id",old.id);
+  else if(rid) q=await sb.from("schedule_assignments").insert({month_id:getMonthId(),duty_id:did,slot,day,resident_id:rid});
+  if(q?.error){if(renderAfter)alert(q.error.message);return false}
+  if(renderAfter){await loadAssignments();render()}
+  return true;
 }
 
 function enableDutyDrag(){
@@ -105,10 +104,11 @@ function render(){
    row.innerHTML=`<td><b>${day}</b><small style="display:block;color:#68707a">${dayName(currentKey,day)}</small></td>`;
    shown.forEach(d=>{
      let cell=document.createElement("td");
-     for(let sl=0;sl<d.slots;sl++){
+     for(const item of orderedSlots(d,day)){
+       const sl=item.slot;
        let sel=document.createElement("select");sel.className="assign";sel.disabled=!canEdit();
        let op=document.createElement("option");op.value="";op.textContent="- empty -";sel.appendChild(op);
-       let a=findAssign(d.id,sl,day),used=occupied(day).filter(id=>id!==a?.resident_id);
+       let a=item.a,used=occupied(day).filter(id=>id!==a?.resident_id);
        for(const batch of BATCHES){
          let group=document.createElement("optgroup");group.label=batch;
          residents.filter(r=>r.batch===batch&&!used.includes(r.id)).forEach(r=>{
@@ -118,7 +118,7 @@ function render(){
        }
        sel.value=a?.resident_id||"";
        let rr=residents.find(r=>r.id===sel.value);if(rr){sel.classList.add("res"+rr.batch);cell.classList.add("batch-cell","res"+rr.batch);let bl=document.createElement("span");bl.className="batch-label p"+rr.batch;bl.textContent=rr.batch;cell.appendChild(bl)}
-       sel.onchange=async()=>{await setAssign(d.id,sl,day,sel.value)};
+       sel.onchange=async()=>{const sy=window.scrollY,st=wrap.scrollTop,slx=wrap.scrollLeft;await setAssign(d.id,sl,day,sel.value,false);await loadAssignments();render();requestAnimationFrame(()=>{window.scrollTo(0,sy);const w=document.querySelector(".table-wrap");if(w){w.scrollTop=st;w.scrollLeft=slx}})};
        cell.appendChild(sel)
      }
      row.appendChild(cell)
@@ -132,36 +132,37 @@ function render(){
 function morningStats(r){let as=assignments.filter(a=>a.resident_id===r.id&&duties.find(d=>d.id===a.duty_id)?.duty_type==="morning"),by={};as.forEach(a=>{let d=duties.find(x=>x.id===a.duty_id);if(d)by[d.name]=(by[d.name]||0)+1});return{n:as.length,by}}function shiftStats(r){return assignments.filter(a=>a.resident_id===r.id&&duties.find(d=>d.id===a.duty_id)?.duty_type==="24h").length}
 function renderMiniStats(){let rows=residents.map(r=>{let n=activeTab==="morning"?morningStats(r).n:shiftStats(r);return `<tr><td><span class="pill p${r.batch}">${r.batch}</span> ${esc(r.name)}</td><td>${n}</td></tr>`}).join("");$("miniStats").innerHTML=`<table style="width:100%;border-collapse:collapse"><tr><th>Resident</th><th>${activeTab==="morning"?"Total morning duties":"Total 24-hour shifts"}</th></tr>${rows}</table>`}
 async function command(){
- const text=$("command").value.trim();
- const dayMap={sunday:0,monday:1,tuesday:2,wednesday:3,thursday:4,friday:5,saturday:6,sun:0,mon:1,tue:2,tues:2,wed:3,thu:4,thur:4,thurs:4,fri:5,sat:6};
- const m=text.match(/^(.+?)\s+has\s+(.+?)\s+each\s+([A-Za-z]+)$/i);
- if(!m){$("notice").textContent="Use: Resident name has Duty name each Sunday";return}
- const norm=v=>String(v??"").normalize("NFC").replace(/\s+/g," ").trim().toLocaleLowerCase();
- const clean=v=>norm(v).replace(/[“”"'`]/g,"").replace(/[.,;:!?]+$/,"").trim();
- const rKey=clean(m[1]),dKey=clean(m[2]),dayKey=clean(m[3]),wd=dayMap[dayKey];
- if(wd===undefined){$("notice").textContent="I don't recognize that weekday.";return}
- const findBest=(items,key,filter=()=>true)=>{let pool=items.filter(filter),exact=pool.find(x=>clean(x.name)===key);if(exact)return exact;let matches=pool.filter(x=>clean(x.name).includes(key)||key.includes(clean(x.name)));return matches.length===1?matches[0]:null};
- const r=findBest(residents,rKey);
- const d=findBest(duties,dKey,x=>x.duty_type===activeTab);
- if(!r){$("notice").textContent="Resident not found. You can type the full name exactly as shown in Residents.";return}
- if(!d){$("notice").textContent="Duty not found in the current tab. Use the exact duty name shown in the schedule.";return}
- if(!canEdit()){$("notice").textContent="You need Editor or Admin access to use Quick command.";return}
- let changed=0,skip=0,errors=[];
- const scrollY=window.scrollY,wrap=document.querySelector(".table-wrap"),wrapScrollTop=wrap?.scrollTop||0,wrapScrollLeft=wrap?.scrollLeft||0;
- for(let day=1;day<=daysInMonth(currentKey);day++){
-   let[y,mo]=currentKey.split("-").map(Number);if(new Date(y,mo-1,day).getDay()!==wd)continue;
-   let slot=-1;
-   for(let sl=0;sl<d.slots;sl++){let a=findAssign(d.id,sl,day);if(a?.resident_id===r.id){slot=sl;break}let taken=occupied(day).filter(id=>id!==a?.resident_id);if(!taken.includes(r.id)){slot=sl;break}}
-   if(slot<0){skip++;continue}
-   let old=findAssign(d.id,slot,day),q=old?await sb.from("schedule_assignments").update({resident_id:r.id}).eq("id",old.id):await sb.from("schedule_assignments").insert({month_id:getMonthId(),duty_id:d.id,slot,day,resident_id:r.id});
-   if(q.error)errors.push(`${day}: ${q.error.message}`);else changed++;
- }
- await loadAssignments();render();requestAnimationFrame(()=>{window.scrollTo(0,scrollY);const w=document.querySelector(".table-wrap");if(w){w.scrollTop=wrapScrollTop;w.scrollLeft=wrapScrollLeft}});
- $("notice").textContent=errors.length?`Applied ${changed} time(s), but ${errors.length} save(s) failed: ${errors[0]}`:`Applied ${changed} time(s)${skip?`; ${skip} conflict(s) skipped.`:"."}`;
+  const notice=$("notice"), text=$("command").value.trim();
+  const dayMap={sunday:0,monday:1,tuesday:2,wednesday:3,thursday:4,friday:5,saturday:6,sun:0,mon:1,tue:2,tues:2,wed:3,thu:4,thur:4,thurs:4,fri:5,sat:6};
+  const m=text.match(/^(.+?)\s+has\s+(.+?)\s+each\s+([A-Za-z]+)$/i);
+  if(!m){notice.textContent="Use: English name has Duty name each Sunday";return}
+  const norm=v=>String(v??"").normalize("NFC").replace(/\s+/g," ").trim().toLocaleLowerCase();
+  const clean=v=>norm(v).replace(/[“”"'`]/g,"").replace(/[.,;:!?]+$/g,"").trim();
+  const rKey=clean(m[1]),dKey=clean(m[2]),dayKey=clean(m[3]);
+  const r=residents.find(x=>clean(x.name)===rKey||clean(x.english_name)===rKey);
+  const d=findDutyForCommand(dKey),wd=dayMap[dayKey];
+  if(wd===undefined){notice.textContent="I don't recognize that weekday.";return}
+  if(!r){notice.textContent="Resident not found. Add an English name in Residents, then use that name here.";return}
+  if(!d){notice.textContent="Duty not found. Use the duty name shown in Duties.";return}
+  if(!canEdit()){notice.textContent="You need Editor or Admin access to use Quick command.";return}
+  const sy=window.scrollY,wrap=document.querySelector(".table-wrap"),st=wrap?.scrollTop||0,sl=wrap?.scrollLeft||0;
+  let changed=0,skip=0,errors=[];const [y,mo]=currentKey.split("-").map(Number);
+  for(let day=1;day<=daysInMonth(currentKey);day++){
+    if(new Date(y,mo-1,day).getDay()!==wd)continue;
+    let slot=-1;
+    for(let s=0;s<d.slots;s++){const a=findAssign(d.id,s,day);if(a?.resident_id===r.id){slot=s;break}const taken=occupied(day).filter(id=>id!==a?.resident_id);if(!taken.includes(r.id)){slot=s;break}}
+    if(slot<0){skip++;continue}
+    const ok=await setAssign(d.id,slot,day,r.id,false);if(ok)changed++;else errors.push(String(day));
+  }
+  await loadAssignments();render();
+  requestAnimationFrame(()=>{window.scrollTo(0,sy);const w=document.querySelector(".table-wrap");if(w){w.scrollTop=st;w.scrollLeft=sl}});
+  notice.textContent=errors.length?`Applied ${changed} time(s); save failed on day(s): ${errors.join(", ")}.`:`Applied ${changed} time(s)${skip?`; ${skip} conflict(s) skipped.`:"."}`;
 }
+function findDutyForCommand(key){const exact=duties.find(x=>String(x.name).normalize("NFC").trim().toLocaleLowerCase()===key);if(exact)return exact;const matches=duties.filter(x=>{const n=String(x.name).normalize("NFC").trim().toLocaleLowerCase();return n.includes(key)||key.includes(n)});return matches.length===1?matches[0]:null}
+
 async function newMonth(){if(!canEdit())return;let k=prompt("Enter month as YYYY-MM",currentKey);if(!k||!/^[0-9]{4}-[0-9]{2}$/.test(k))return;let x=await sb.from("schedule_months").insert({month_key:k});if(x.error&&!x.error.message.includes("duplicate"))alert(x.error.message);await load()}async function moveMonth(delta){let[y,m]=currentKey.split("-").map(Number),d=new Date(y,m-1+delta,1),k=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");if(!months.some(x=>x.month_key===k)&&canEdit())await sb.from("schedule_months").insert({month_key:k});currentKey=k;await load()}
 function showModal(h){$("modalbox").innerHTML=h;$("modal").classList.add("show")}function closeModal(){$("modal").classList.remove("show")}$("modal").onclick=e=>{if(e.target.id==="modal")closeModal()}
-async function residentsModal(){let list=residents.map(r=>`<div class="row"><span><span class="pill p${r.batch}">${r.batch}</span> <input id="rname_${r.id}" value="${esc(r.name)}" style="max-width:220px"><select id="rbatch_${r.id}">${BATCHES.map(x=>`<option ${x===r.batch?"selected":""}>${x}</option>`).join("")}</select></span><button onclick="editResident('${r.id}')">Save</button><button class="danger" onclick="deleteResident('${r.id}')">Delete</button></div>`).join("");showModal(`<h2>Residents</h2><div class="toolbar"><input id="rn" placeholder="Name"><select id="rb">${BATCHES.map(x=>`<option>${x}</option>`).join("")}</select><button onclick="addResident()">Add</button></div><div>${list||"No residents yet."}</div><p><button class="secondary" onclick="closeModal()">Done</button></p>`)}async function addResident(){let name=$("rn").value.trim(),batch=$("rb").value;if(!name)return;let x=await sb.from("schedule_residents").insert({name,batch});if(x.error)alert(x.error.message);await load();residentsModal()}async function editResident(id){let name=$("rname_"+id).value.trim(),batch=$("rbatch_"+id).value;if(!name)return;let x=await sb.from("schedule_residents").update({name,batch}).eq("id",id);if(x.error)alert(x.error.message);await load();residentsModal()}async function deleteResident(id){if(!confirm("Delete resident and their assignments?"))return;await sb.from("schedule_residents").delete().eq("id",id);await load();residentsModal()}
+async function residentsModal(){let list=residents.map(r=>`<div class="row"><span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="pill p${r.batch}">${r.batch}</span><input id="rname_${r.id}" value="${esc(r.name)}" placeholder="Arabic name" style="max-width:180px"><input id="reng_${r.id}" value="${esc(r.english_name||"")}" placeholder="English name" style="max-width:180px"><select id="rbatch_${r.id}">${BATCHES.map(x=>`<option ${x===r.batch?"selected":""}>${x}</option>`).join("")}</select></span><button onclick="editResident('${r.id}')">Save</button><button class="danger" onclick="deleteResident('${r.id}')">Delete</button></div>`).join("");showModal(`<h2>Residents</h2><div class="toolbar"><input id="rn" placeholder="Arabic name"><input id="ren" placeholder="English name"><select id="rb">${BATCHES.map(x=>`<option>${x}</option>`).join("")}</select><button onclick="addResident()">Add</button></div><p class="msg">Enter an English name for each resident. Quick command accepts either the Arabic or English name.</p><div>${list||"No residents yet."}</div><p><button class="secondary" onclick="closeModal()">Done</button></p>`)}async function addResident(){let name=$("rn").value.trim(),english_name=$("ren").value.trim(),batch=$("rb").value;if(!name)return;let x=await sb.from("schedule_residents").insert({name,english_name,batch});if(x.error)alert(x.error.message);await load();residentsModal()}async function editResident(id){let name=$("rname_"+id).value.trim(),english_name=$("reng_"+id).value.trim(),batch=$("rbatch_"+id).value;if(!name)return;let x=await sb.from("schedule_residents").update({name,english_name,batch}).eq("id",id);if(x.error)alert(x.error.message);await load();residentsModal()}async function deleteResident(id){if(!confirm("Delete resident and their assignments?"))return;await sb.from("schedule_residents").delete().eq("id",id);await load();residentsModal()}
 async function dutiesModal(){let list=duties.map(d=>`<div class="row"><span><input id="dname_${d.id}" value="${esc(d.name)}" style="max-width:240px"><select id="dtype_${d.id}"><option value="morning" ${d.duty_type==="morning"?"selected":""}>Morning</option><option value="24h" ${d.duty_type==="24h"?"selected":""}>24 hour</option></select><input id="dslots_${d.id}" type="number" min="1" value="${d.slots}" style="width:70px"></span><button onclick="editDuty('${d.id}')">Save</button><button class="danger" onclick="deleteDuty('${d.id}')">Delete</button></div>`).join("");showModal(`<h2>Duties / shifts</h2><div class="toolbar"><input id="dn" placeholder="Duty name"><select id="dt"><option value="morning">Morning</option><option value="24h">24 hour</option></select><input id="ds" type="number" min="1" value="1" style="width:80px"><button onclick="addDuty()">Add</button></div><p class="msg">Slots are a maximum; every slot may be left empty.</p><div>${list}</div><p><button class="secondary" onclick="closeModal()">Done</button></p>`)}async function addDuty(){let name=$("dn").value.trim(),type=$("dt").value,slots=Math.max(1,+$("ds").value||1);if(!name)return;let x=await sb.from("schedule_duties").insert({name,duty_type:type,slots});if(x.error)alert(x.error.message);await load();dutiesModal()}async function editDuty(id){let name=$("dname_"+id).value.trim(),type=$("dtype_"+id).value,slots=Math.max(1,+$("dslots_"+id).value||1);if(!name)return;let x=await sb.from("schedule_duties").update({name,duty_type:type,slots}).eq("id",id);if(x.error)alert(x.error.message);await load();dutiesModal()}async function deleteDuty(id){if(!confirm("Delete this duty and its assignments?"))return;await sb.from("schedule_duties").delete().eq("id",id);await load();dutiesModal()}
 async function statsModal(){let rows=residents.map(r=>{let ms=morningStats(r),sh=shiftStats(r);return `<tr><td><span class="pill p${r.batch}">${r.batch}</span> ${esc(r.name)}</td><td>${ms.n}</td><td>${Object.entries(ms.by).map(([k,v])=>`${esc(k)}: ${v}`).join("  -  ")||"-"}</td><td>${sh}</td></tr>`}).join("");showModal(`<h2>Statistics - ${monthLabel(currentKey)}</h2><table style="width:100%;border-collapse:collapse"><tr><th>Resident</th><th>Morning total</th><th>Morning breakdown</th><th>24h total</th></tr>${rows}</table><p><button class="secondary" onclick="closeModal()">Close</button></p>`)}
 
@@ -176,8 +177,8 @@ function exportDutiesDoc(){
     html+=`<tr><td class="date">${day} ${dayName(currentKey,day)}</td>`;
     shown.forEach(d=>{
       let vals=[];
-      for(let sl=0;sl<d.slots;sl++){
-        let a=findAssign(d.id,sl,day),r=a?.resident_id?residents.find(x=>x.id===a.resident_id):null;
+      for(const item of orderedSlots(d,day)){
+        let a=item.a,r=a?.resident_id?residents.find(x=>x.id===a.resident_id):null;
         vals.push(r?`<span class="r${r.batch}">${esc(r.name)} <small>(${r.batch})</small></span>`:"-");
       }
       html+=`<td>${vals.join("<br>")}</td>`;
@@ -217,7 +218,7 @@ function exportShiftsPhoto(){
     ctx.font="12px Arial";ctx.fillStyle="#68707a";ctx.fillText(dayName(currentKey,day),10,y+41);
     shown.forEach((d,i)=>{
       const x=dateW+i*cellW;let vals=[];
-      for(let sl=0;sl<d.slots;sl++){let a=findAssign(d.id,sl,day),r=a?.resident_id?residents.find(x=>x.id===a.resident_id):null;vals.push(r);}
+      for(const item of orderedSlots(d,day)){let a=item.a,r=a?.resident_id?residents.find(x=>x.id===a.resident_id):null;vals.push(r);}
       let yy=y+17;
       vals.forEach(r=>{
         if(!r)return;
