@@ -104,7 +104,29 @@ residents.sort((a,b)=>{
   return String(a.english_name||a.name||"").localeCompare(String(b.english_name||b.name||""));
 });
 duties=(a[1].data||[]).filter(d=>String(d.name??"").trim().toLocaleLowerCase()!=="angina unit");months=a[2].data||[];if(!months.some(m=>m.month_key===currentKey)&&canEdit()){await sb.from("schedule_months").insert({month_key:currentKey});let x=await sb.from("schedule_months").select("*").order("month_key");months=x.data||[]}if(!months.some(m=>m.month_key===currentKey))currentKey=months[months.length-1]?.month_key||currentKey;$("month").innerHTML=months.map(m=>`<option value="${m.month_key}">${monthLabel(m.month_key)}</option>`).join("");$("month").value=currentKey;$("month").onchange=async()=>{currentKey=$("month").value;await loadAssignments();render()};await loadAssignments();render()}
-async function loadAssignments(){let m=months.find(x=>x.month_key===currentKey);if(!m){assignments=[];exclusions=[];weekdayExclusions=[];return}let [x,e,w]=await Promise.all([sb.from("schedule_assignments").select("*").eq("month_id",m.id),sb.from("schedule_resident_day_exclusions").select("*").eq("month_id",m.id),sb.from("schedule_resident_weekday_exclusions").select("*").eq("month_id",m.id)]);assignments=x.data||[];exclusions=e.data||[];weekdayExclusions=w.data||[]}function getMonthId(){return months.find(x=>x.month_key===currentKey)?.id}function occupied(day){return assignments.filter(a=>a.day===day&&a.resident_id).map(a=>a.resident_id)}function findAssign(did,slot,day){return assignments.find(a=>a.duty_id===did&&a.slot===slot&&a.day===day)}function isExcluded(day,rid){const [yy,mm]=currentKey.split("-").map(Number);const dow=new Date(yy,mm-1,day).getDay();return exclusions.some(e=>e.day===day&&e.resident_id===rid)||weekdayExclusions.some(e=>e.weekday===dow&&e.resident_id===rid)}
+async function loadAssignments(){
+  let m=months.find(x=>x.month_key===currentKey);
+  if(!m){assignments=[];exclusions=[];weekdayExclusions=[];return}
+  let [x,e,w]=await Promise.all([
+    sb.from("schedule_assignments").select("*").eq("month_id",m.id),
+    sb.from("schedule_resident_day_exclusions").select("*").eq("month_id",m.id),
+    sb.from("schedule_resident_weekday_exclusions").select("*").eq("month_id",m.id)
+  ]);
+  assignments=x.data||[];exclusions=e.data||[];weekdayExclusions=w.data||[];
+  // Remove existing Friday morning assignments for editors/admins; keep 24-hour shifts untouched.
+  if(canEdit()){
+    const [yy,mm]=currentKey.split("-").map(Number);
+    const fridayMorningIds=assignments.filter(a=>{
+      const duty=duties.find(d=>d.id===a.duty_id);
+      return a.resident_id && duty?.duty_type==="morning" && new Date(yy,mm-1,a.day).getDay()===5;
+    }).map(a=>a.id);
+    if(fridayMorningIds.length){
+      const cleared=await sb.from("schedule_assignments").delete().in("id",fridayMorningIds);
+      if(!cleared.error) assignments=assignments.filter(a=>!fridayMorningIds.includes(a.id));
+      else console.error("Could not clear Friday morning assignments:",cleared.error.message);
+    }
+  }
+}function getMonthId(){return months.find(x=>x.month_key===currentKey)?.id}function occupied(day){return assignments.filter(a=>a.day===day&&a.resident_id).map(a=>a.resident_id)}function findAssign(did,slot,day){return assignments.find(a=>a.duty_id===did&&a.slot===slot&&a.day===day)}function isExcluded(day,rid){const [yy,mm]=currentKey.split("-").map(Number);const dow=new Date(yy,mm-1,day).getDay();return exclusions.some(e=>e.day===day&&e.resident_id===rid)||weekdayExclusions.some(e=>e.weekday===dow&&e.resident_id===rid)}
 function residentRank(r){return residents.indexOf(r)}
 const MORNING_THURSDAY_ONLY=new Set([
   "advanced echo/stress ecg/holter",
@@ -145,7 +167,8 @@ async function setAssign(did,slot,day,rid,renderAfter=true){
   const duty=duties.find(x=>x.id===did);
   const [yy,mm]=currentKey.split("-").map(Number);
   const dow=new Date(yy,mm-1,day).getDay();
-  if(duty && !dutyAllowedOnDow(duty,dow)){
+  // Disallowed days block new assignments, but always allow clearing an existing one.
+  if(rid && duty && !dutyAllowedOnDow(duty,dow)){
     if(renderAfter)alert(`${duty.name} is not scheduled on ${dayName(currentKey,day)}.`);
     return false;
   }
@@ -215,29 +238,37 @@ function render(){
    if(canEdit()){const exBtn=document.createElement("button");exBtn.type="button";exBtn.className="secondary";exBtn.style.cssText="display:block;margin-top:5px;padding:3px 5px;font-size:10px;white-space:nowrap";const exCount=weekdayExclusions.filter(e=>e.weekday===dow).length;exBtn.textContent=exCount?`Unavailable (${exCount})`:`Strike out ${DAYS[dow]}`;exBtn.onclick=()=>openWeekdayExclusions(dow);dateCell.appendChild(exBtn)}
    shown.forEach(d=>{
      let cell=document.createElement("td");
-     if(!dutyAllowedOnDay(d,day)){
+     const allowedToday=dutyAllowedOnDay(d,day);
+     const dayAssignments=orderedSlots(d,day);
+     if(!allowedToday && !dayAssignments.some(item=>item.a?.resident_id)){
        cell.innerHTML='<span class="msg">Not scheduled</span>';
        cell.style.background="#f3f5f7";
        cell.style.color="#a0a8b0";
        row.appendChild(cell);
        return;
      }
-     for(const item of orderedSlots(d,day)){
+     for(const item of dayAssignments){
        const sl=item.slot;
        let sel=document.createElement("select");sel.className="assign";sel.disabled=!canEdit();
        let op=document.createElement("option");op.value="";op.textContent="- empty -";sel.appendChild(op);
        let a=item.a,used=occupied(day).filter(id=>id!==a?.resident_id);
-       for(const batch of BATCHES){
-         let group=document.createElement("optgroup");group.label=batch;
-         residents.filter(r=>r.batch===batch&&!used.includes(r.id)&&(!isExcluded(day,r.id)||r.id===a?.resident_id)).forEach(r=>{
-           let o=document.createElement("option");o.value=r.id;o.textContent=r.name;group.appendChild(o)
-         });
-         if(group.children.length)sel.appendChild(group)
+       if(allowedToday){
+         for(const batch of BATCHES){
+           let group=document.createElement("optgroup");group.label=batch;
+           residents.filter(r=>r.batch===batch&&!used.includes(r.id)&&(!isExcluded(day,r.id)||r.id===a?.resident_id)).forEach(r=>{
+             let o=document.createElement("option");o.value=r.id;o.textContent=r.name;group.appendChild(o)
+           });
+           if(group.children.length)sel.appendChild(group)
+         }
+       }else if(a?.resident_id){
+         const current=residents.find(r=>r.id===a.resident_id);
+         if(current){let o=document.createElement("option");o.value=current.id;o.textContent=`${current.name} (existing)`;sel.appendChild(o)}
        }
        sel.value=a?.resident_id||"";
        let rr=residents.find(r=>r.id===sel.value);if(rr){sel.classList.add("res"+rr.batch);cell.classList.add("batch-cell","res"+rr.batch);let bl=document.createElement("span");bl.className="batch-label p"+rr.batch;bl.textContent=rr.batch;cell.appendChild(bl)}
        sel.onchange=async()=>{const sy=window.scrollY,st=wrap.scrollTop,slx=wrap.scrollLeft;await setAssign(d.id,sl,day,sel.value,false);await loadAssignments();render();requestAnimationFrame(()=>{window.scrollTo(0,sy);const w=document.querySelector(".table-wrap");if(w){w.scrollTop=st;w.scrollLeft=slx}})};
-       cell.appendChild(sel)
+       cell.appendChild(sel);
+
      }
      row.appendChild(cell)
    });
