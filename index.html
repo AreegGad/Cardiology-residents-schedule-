@@ -14,15 +14,29 @@
 <button class="sign-in-btn" onclick="signIn()">Sign in <span>></span></button>
 <div id="loginMsg" class="msg"></div>
 </div>
+<div id="setupPassword" class="login card hidden">
+  <div class="login-art"><div class="orbit orbit1"></div><div class="orbit orbit2"></div><div class="heart">CARDIO</div></div>
+  <div class="login-brand">WELCOME</div>
+  <h1>Set your password</h1>
+  <p class="msg">Choose a password to activate your schedule account.</p>
+  <div class="login-field"><input id="newPassword" type="password" placeholder="New password" autocomplete="new-password"></div>
+  <div class="login-field"><input id="confirmPassword" type="password" placeholder="Confirm new password" autocomplete="new-password"></div>
+  <button class="sign-in-btn" onclick="finishInviteSetup()">Save password</button>
+  <div id="setupPasswordMsg" class="msg"></div>
+</div>
 <div id="app" class="app hidden"><div class="top"><h1> Residents Schedule</h1><select id="month" class="month"></select><button onclick="newMonth()">+ New month</button><button id="resBtn" class="secondary" onclick="residentsModal()">Residents</button><button id="dutyBtn" class="secondary" onclick="dutiesModal()">Duties</button><button id="usersBtn" class="secondary" onclick="usersModal()">Users</button><div class="spacer"></div><span id="role" class="msg"></span><button class="secondary" onclick="signOut()">Sign out</button></div>
-<div class="card"><div class="toolbar"><button onclick="moveMonth(-1)"><</button><button onclick="moveMonth(1)">></button><div class="spacer"></div><button class="secondary" onclick="statsModal()">Statistics</button><button class="secondary" onclick="searchModal()">Search</button><button class="secondary" onclick="exportDutiesDoc()">Export duties to Docs</button><button class="secondary" onclick="exportShiftsPhoto()">Export shifts as photo</button></div></div>
+<div class="card"><div class="toolbar"><button onclick="moveMonth(-1)"><</button><button onclick="moveMonth(1)">></button><div class="spacer"></div><button class="secondary" onclick="statsModal()">Statistics</button><button class="secondary" onclick="searchModal()">Search</button><button class="secondary" onclick="openExclusionsForSelectedDay()">Unavailable residents</button><button class="secondary" onclick="exportDutiesDoc()">Export duties to Docs</button><button class="secondary" onclick="exportShiftsPhoto()">Export shifts as photo</button></div></div>
 <div class="tabs"><button id="morningTab" class="tab active" onclick="setTab('morning')">Morning Duties</button><button id="shiftTab" class="tab" onclick="setTab('24h')">24-hour Shifts</button></div>
 <div class="msg" style="margin:-3px 0 9px 2px">Note: Empty cells are allowed. A finalized assignment makes that resident unavailable elsewhere on the same date.</div><div class="card"><b>Morning duty rules</b><div class="msg" style="margin-top:6px">Thursday: only Advanced echo/stress ECG/holter, Clinic echo, Clinic, Smouha cath lab, EP, and Smouha echo/clinic. Nariman clinic: Saturday, Monday, Wednesday. Pregnancy clinic: Wednesday. Borg elarab clinic: Sunday.</div></div><div id="commandCard" class="card"><b>Quick command</b><div class="toolbar" style="margin-top:7px"><input id="quickCommandInput" style="flex:1;min-width:260px" placeholder="Arabic or English name has Duty name each Sunday"><button onclick="applyQuickCommand()">Apply</button></div><div class="msg">Use either the Arabic or English resident name. Example: Hossam has Smouha cath lab each Sunday</div><div id="notice" class="notice"></div></div>
 <div id="schedule"></div><div class="card"><b id="statsTitle">Morning-duty totals</b><div id="miniStats" style="margin-top:8px"></div></div></div>
 <div id="modal" class="modal"><div id="modalbox" class="modalbox"></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script>
-const SUPABASE_URL="https://ncvampqtqrfziwoqvxjq.supabase.co",SUPABASE_KEY="sb_publishable_eLC90HKROH3jwMKvQ-kSbw_y5yraBar",sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
-const BATCHES=["2019","2020","2021","2022","2023"],DAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];let user=null,role="viewer",residents=[],duties=[],months=[],assignments=[],currentKey=new Date().toISOString().slice(0,7),activeTab="morning";
+const SUPABASE_URL="https://ncvampqtqrfziwoqvxjq.supabase.co",SUPABASE_KEY="sb_publishable_eLC90HKROH3jwMKvQ-kSbw_y5yraBar";
+const initialAuthParams=new URLSearchParams(location.hash.startsWith("#")?location.hash.slice(1):location.hash);
+const queryAuthParams=new URLSearchParams(location.search);
+let inviteFlow=[initialAuthParams.get("type"),queryAuthParams.get("type")].some(x=>x==="invite"||x==="recovery");
+const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+const BATCHES=["2019","2020","2021","2022","2023"],DAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];let user=null,role="viewer",residents=[],duties=[],months=[],assignments=[],exclusions=[],weekdayExclusions=[],currentKey=new Date().toISOString().slice(0,7),activeTab="morning";
 const $=id=>document.getElementById(id),esc=s=>String(s??"").replace(/[&<>"\']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","\'":"&#39;"}[c]));;
 function monthLabel(k){let[y,m]=k.split("-").map(Number);return new Date(y,m-1,1).toLocaleString(undefined,{month:"long",year:"numeric"})}function daysInMonth(k){let[y,m]=k.split("-").map(Number);return new Date(y,m,0).getDate()}function dayName(k,d){let[y,m]=k.split("-").map(Number);return DAYS[new Date(y,m-1,d).getDay()]}function canEdit(){return role==="admin"||role==="editor"}function isAdmin(){return role==="admin"}
 function togglePassword(){let p=$("password"),b=document.querySelector(".eye");p.type=p.type==="password"?"text":"password";b.textContent=p.type==="password"?"Show":"Hide"}async function signIn(){
@@ -44,7 +58,31 @@ function togglePassword(){let p=$("password"),b=document.querySelector(".eye");p
   }
 }
 async function signOut(){await sb.auth.signOut()}
-sb.auth.onAuthStateChange(async(_,session)=>{user=session?.user||null;if(user){$("login").classList.add("hidden");$("app").classList.remove("hidden");await load()}else{$("app").classList.add("hidden");$("login").classList.remove("hidden")}});
+sb.auth.onAuthStateChange(async(event,session)=>{
+  user=session?.user||null;
+  if(user && inviteFlow){
+    $("login").classList.add("hidden");$("app").classList.add("hidden");$("setupPassword").classList.remove("hidden");
+    $("setupPasswordMsg").textContent="Set a password to finish activating your account.";
+    return;
+  }
+  if(user){$("login").classList.add("hidden");$("setupPassword").classList.add("hidden");$("app").classList.remove("hidden");await load()}
+  else{$("app").classList.add("hidden");$("setupPassword").classList.add("hidden");$("login").classList.remove("hidden")}
+});
+async function finishInviteSetup(){
+  const msg=$("setupPasswordMsg"),password=$("newPassword").value,confirm=$("confirmPassword").value;
+  if(!password||password.length<8){msg.textContent="Please choose a password with at least 8 characters.";return}
+  if(password!==confirm){msg.textContent="The passwords do not match.";return}
+  const session=await sb.auth.getSession();
+  if(!session.data?.session){msg.textContent="This invitation link is no longer active. Please request a new invitation.";return}
+  msg.textContent="Saving password...";
+  const result=await sb.auth.updateUser({password});
+  if(result.error){msg.textContent=result.error.message;return}
+  inviteFlow=false;
+  history.replaceState({},document.title,location.pathname+location.search);
+  $("setupPassword").classList.add("hidden");$("app").classList.remove("hidden");
+  msg.textContent="Password saved.";
+  await load();
+}
 async function load(){let r=await sb.from("schedule_user_roles").select("role").eq("user_id",user.id).maybeSingle();role=r.data?.role||"viewer";$("role").textContent=`${role[0].toUpperCase()+role.slice(1)}  -  ${user.email}`;["resBtn","dutyBtn","usersBtn","commandCard"].forEach(id=>$(id).style.display=(id==="commandCard"?canEdit():isAdmin())?"":"none");let a=await Promise.all([sb.from("schedule_residents").select("*").order("batch").order("created_at"),sb.from("schedule_duties").select("*").order("created_at"),sb.from("schedule_months").select("*").order("month_key")]);residents=a[0].data||[];
 const priority=(r)=>{
   const key=String(r.english_name||r.name||"").trim().toLocaleLowerCase();
@@ -66,7 +104,7 @@ residents.sort((a,b)=>{
   return String(a.english_name||a.name||"").localeCompare(String(b.english_name||b.name||""));
 });
 duties=(a[1].data||[]).filter(d=>String(d.name??"").trim().toLocaleLowerCase()!=="angina unit");months=a[2].data||[];if(!months.some(m=>m.month_key===currentKey)&&canEdit()){await sb.from("schedule_months").insert({month_key:currentKey});let x=await sb.from("schedule_months").select("*").order("month_key");months=x.data||[]}if(!months.some(m=>m.month_key===currentKey))currentKey=months[months.length-1]?.month_key||currentKey;$("month").innerHTML=months.map(m=>`<option value="${m.month_key}">${monthLabel(m.month_key)}</option>`).join("");$("month").value=currentKey;$("month").onchange=async()=>{currentKey=$("month").value;await loadAssignments();render()};await loadAssignments();render()}
-async function loadAssignments(){let m=months.find(x=>x.month_key===currentKey);if(!m){assignments=[];return}let x=await sb.from("schedule_assignments").select("*").eq("month_id",m.id);assignments=x.data||[]}function getMonthId(){return months.find(x=>x.month_key===currentKey)?.id}function occupied(day){return assignments.filter(a=>a.day===day&&a.resident_id).map(a=>a.resident_id)}function findAssign(did,slot,day){return assignments.find(a=>a.duty_id===did&&a.slot===slot&&a.day===day)}
+async function loadAssignments(){let m=months.find(x=>x.month_key===currentKey);if(!m){assignments=[];exclusions=[];weekdayExclusions=[];return}let [x,e,w]=await Promise.all([sb.from("schedule_assignments").select("*").eq("month_id",m.id),sb.from("schedule_resident_day_exclusions").select("*").eq("month_id",m.id),sb.from("schedule_resident_weekday_exclusions").select("*").eq("month_id",m.id)]);assignments=x.data||[];exclusions=e.data||[];weekdayExclusions=w.data||[]}function getMonthId(){return months.find(x=>x.month_key===currentKey)?.id}function occupied(day){return assignments.filter(a=>a.day===day&&a.resident_id).map(a=>a.resident_id)}function findAssign(did,slot,day){return assignments.find(a=>a.duty_id===did&&a.slot===slot&&a.day===day)}function isExcluded(day,rid){const [yy,mm]=currentKey.split("-").map(Number);const dow=new Date(yy,mm-1,day).getDay();return exclusions.some(e=>e.day===day&&e.resident_id===rid)||weekdayExclusions.some(e=>e.weekday===dow&&e.resident_id===rid)}
 function residentRank(r){return residents.indexOf(r)}
 const MORNING_THURSDAY_ONLY=new Set([
   "advanced echo/stress ecg/holter",
@@ -111,8 +149,18 @@ async function setAssign(did,slot,day,rid,renderAfter=true){
     return false;
   }
   const old=findAssign(did,slot,day);
-  const taken=occupied(day).filter(x=>x!==old?.resident_id);
-  if(rid&&taken.includes(rid))return false;
+  if(rid && isExcluded(day,rid)){if(renderAfter)alert(`This resident is marked unavailable on ${dayName(currentKey,day)}.`);return false}
+  const normalizedDutyName = name => String(name || "").normalize("NFC").replace(/\s+/g," ").trim().toLocaleLowerCase();
+  const isClinicPair = (a,b) => {
+    const names = [normalizedDutyName(a?.name), normalizedDutyName(b?.name)];
+    return names.includes("clinic") && names.includes("clinic echo");
+  };
+  const conflictingAssignments = assignments.filter(a => {
+    if (a.day !== day || !a.resident_id || a.resident_id !== rid || a.id === old?.id) return false;
+    const otherDuty = duties.find(x => x.id === a.duty_id);
+    return !isClinicPair(duty, otherDuty);
+  });
+  if(rid && conflictingAssignments.length) return false;
   let q;
   if(old) q=await sb.from("schedule_assignments").update({resident_id:rid||null}).eq("id",old.id);
   else if(rid) q=await sb.from("schedule_assignments").insert({month_id:getMonthId(),duty_id:did,slot,day,resident_id:rid});
@@ -162,6 +210,8 @@ function render(){
    let [yy,mm]=currentKey.split("-").map(Number);let dow=new Date(yy,mm-1,day).getDay();
    if(dow===5)row.className="friday";
    row.innerHTML=`<td><b>${day}</b><small style="display:block;color:#68707a">${dayName(currentKey,day)}</small></td>`;
+   const dateCell=row.firstElementChild;
+   if(canEdit()){const exBtn=document.createElement("button");exBtn.type="button";exBtn.className="secondary";exBtn.style.cssText="display:block;margin-top:5px;padding:3px 5px;font-size:10px;white-space:nowrap";const exCount=weekdayExclusions.filter(e=>e.weekday===dow).length;exBtn.textContent=exCount?`Unavailable (${exCount})`:`Strike out ${DAYS[dow]}`;exBtn.onclick=()=>openWeekdayExclusions(dow);dateCell.appendChild(exBtn)}
    shown.forEach(d=>{
      let cell=document.createElement("td");
      if(!dutyAllowedOnDay(d,day)){
@@ -178,7 +228,7 @@ function render(){
        let a=item.a,used=occupied(day).filter(id=>id!==a?.resident_id);
        for(const batch of BATCHES){
          let group=document.createElement("optgroup");group.label=batch;
-         residents.filter(r=>r.batch===batch&&!used.includes(r.id)).forEach(r=>{
+         residents.filter(r=>r.batch===batch&&!used.includes(r.id)&&(!isExcluded(day,r.id)||r.id===a?.resident_id)).forEach(r=>{
            let o=document.createElement("option");o.value=r.id;o.textContent=r.name;group.appendChild(o)
          });
          if(group.children.length)sel.appendChild(group)
@@ -296,6 +346,43 @@ async function addResident(){let name=$("rn").value.trim(),english_name=$("ren")
 async function editResident(id){let name=$("rname_"+id).value.trim(),english_name=$("reng_"+id).value.trim(),batch=$("rbatch_"+id).value;if(!name){alert("Please enter the Arabic name.");return}if(!english_name){alert("Please enter the English name.");return}let x=await sb.from("schedule_residents").update({name,english_name,batch}).eq("id",id);if(x.error){alert(x.error.message);return}await load();residentsModal()}
 async function deleteResident(id){if(!confirm("Delete resident and their assignments?"))return;await sb.from("schedule_residents").delete().eq("id",id);await load();residentsModal()}
 async function dutiesModal(){let list=duties.map(d=>`<div class="row"><span><input id="dname_${d.id}" value="${esc(d.name)}" style="max-width:240px"><select id="dtype_${d.id}"><option value="morning" ${d.duty_type==="morning"?"selected":""}>Morning</option><option value="24h" ${d.duty_type==="24h"?"selected":""}>24 hour</option></select><input id="dslots_${d.id}" type="number" min="1" value="${d.slots}" style="width:70px"></span><button onclick="editDuty('${d.id}')">Save</button><button class="danger" onclick="deleteDuty('${d.id}')">Delete</button></div>`).join("");showModal(`<h2>Duties / shifts</h2><div class="toolbar"><input id="dn" placeholder="Duty name"><select id="dt"><option value="morning">Morning</option><option value="24h">24 hour</option></select><input id="ds" type="number" min="1" value="1" style="width:80px"><button onclick="addDuty()">Add</button></div><p class="msg">Slots are a maximum; every slot may be left empty.</p><div>${list}</div><p><button class="secondary" onclick="closeModal()">Done</button></p>`)}async function addDuty(){let name=$("dn").value.trim(),type=$("dt").value,slots=Math.max(1,+$("ds").value||1);if(!name)return;let x=await sb.from("schedule_duties").insert({name,duty_type:type,slots});if(x.error)alert(x.error.message);await load();dutiesModal()}async function editDuty(id){let name=$("dname_"+id).value.trim(),type=$("dtype_"+id).value,slots=Math.max(1,+$("dslots_"+id).value||1);if(!name)return;let x=await sb.from("schedule_duties").update({name,duty_type:type,slots}).eq("id",id);if(x.error)alert(x.error.message);await load();dutiesModal()}async function deleteDuty(id){if(!confirm("Delete this duty and its assignments?"))return;await sb.from("schedule_duties").delete().eq("id",id);await load();dutiesModal()}
+function openExclusionsForSelectedDay(){
+  if(!canEdit()){alert("You need Editor or Admin access to mark residents unavailable.");return}
+  showModal(`<h2>Unavailable residents by weekday</h2><p class="msg">Choose a weekday. Residents you strike out will be unavailable on every occurrence of that weekday in the selected month.</p><div class="toolbar"><select id="exclusionWeekdayChoice" style="flex:1">${DAYS.map((name,i)=>`<option value="${i}">${name}</option>`).join("")}</select><button onclick="openWeekdayExclusions(Number(document.getElementById('exclusionWeekdayChoice').value))">Manage weekday</button></div><p><button class="secondary" onclick="closeModal()">Cancel</button></p>`);
+}
+function openWeekdayExclusions(weekday){
+  if(!canEdit())return;
+  const checked=new Set(weekdayExclusions.filter(e=>e.weekday===weekday).map(e=>e.resident_id));
+  const list=BATCHES.map(batch=>{
+    const members=residents.filter(r=>r.batch===batch);
+    if(!members.length)return "";
+    return `<h3 style="font-size:14px;margin:12px 0 5px">Batch ${batch}</h3>`+members.map(r=>`<label style="display:flex;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid var(--line);cursor:pointer"><input type="checkbox" data-weekday-exclusion-resident="${r.id}" ${checked.has(r.id)?"checked":""} style="width:auto"><span>${esc(r.name)}${r.english_name?` <small style="color:var(--muted)">(${esc(r.english_name)})</small>`:""}</span></label>`).join("");
+  }).join("");
+  showModal(`<h2>Unavailable on ${DAYS[weekday]}s</h2><p class="msg">For ${monthLabel(currentKey)}, tick any resident who must not be assigned to any duty on <b>every ${DAYS[weekday]}</b>. If they already have assignments on those days, saving will clear them after confirmation.</p><input type="hidden" id="exclusionWeekday" value="${weekday}"><div style="max-height:55vh;overflow:auto">${list||"No residents found."}</div><p class="toolbar" style="margin-top:12px"><button onclick="saveWeekdayExclusions(${weekday})">Save unavailable list</button><button class="secondary" onclick="closeModal()">Cancel</button></p>`);
+}
+async function saveWeekdayExclusions(weekday){
+  if(!canEdit())return;
+  const monthId=getMonthId();if(!monthId){alert("No month is selected.");return}
+  const desired=[...document.querySelectorAll("[data-weekday-exclusion-resident]:checked")].map(el=>el.dataset.weekdayExclusionResident);
+  const previous=weekdayExclusions.filter(e=>e.weekday===weekday).map(e=>e.resident_id);
+  const newlyExcluded=desired.filter(id=>!previous.includes(id));
+  const [yy,mm]=currentKey.split("-").map(Number);
+  const matchingDays=[];for(let day=1;day<=daysInMonth(currentKey);day++)if(new Date(yy,mm-1,day).getDay()===weekday)matchingDays.push(day);
+  const currentlyAssigned=assignments.filter(a=>matchingDays.includes(a.day)&&a.resident_id&&newlyExcluded.includes(a.resident_id));
+  if(currentlyAssigned.length&&!confirm(`${new Set(currentlyAssigned.map(a=>a.resident_id)).size} resident(s) you marked unavailable currently have assignments on ${DAYS[weekday]}s this month. Save and clear those assignments?`))return;
+  const del=await sb.from("schedule_resident_weekday_exclusions").delete().eq("month_id",monthId).eq("weekday",weekday);
+  if(del.error){alert(`Could not update unavailable list: ${del.error.message}`);return}
+  if(desired.length){
+    const ins=await sb.from("schedule_resident_weekday_exclusions").insert(desired.map(resident_id=>({month_id:monthId,weekday,resident_id})));
+    if(ins.error){alert(`Could not save unavailable list: ${ins.error.message}`);await loadAssignments();return}
+  }
+  if(currentlyAssigned.length){
+    const ids=[...new Set(currentlyAssigned.map(a=>a.resident_id))];
+    const clear=await sb.from("schedule_assignments").delete().eq("month_id",monthId).in("day",matchingDays).in("resident_id",ids);
+    if(clear.error)alert(`Unavailable list saved, but existing assignments could not all be cleared: ${clear.error.message}`);
+  }
+  await loadAssignments();closeModal();render();
+}
 async function statsModal(){let rows=residents.map(r=>{let ms=morningStats(r),sh=shiftStats(r);return `<tr><td><span class="pill p${r.batch}">${r.batch}</span> ${esc(r.name)}</td><td>${ms.n}</td><td>${Object.entries(ms.by).map(([k,v])=>`${esc(k)}: ${v}`).join("  -  ")||"-"}</td><td>${sh}</td></tr>`}).join("");showModal(`<h2>Statistics - ${monthLabel(currentKey)}</h2><table style="width:100%;border-collapse:collapse"><tr><th>Resident</th><th>Morning total</th><th>Morning breakdown</th><th>24h total</th></tr>${rows}</table><p><button class="secondary" onclick="closeModal()">Close</button></p>`)}
 
 function exportDutiesDoc(){
@@ -415,7 +502,7 @@ function runSearch(mode){
  }
  $("searchResults").innerHTML=out.length?out.join(""):"<div class='msg'>No finalized assignments found.</div>";
 }
-async function usersModal(){let q=await sb.rpc("admin_list_schedule_users");if(q.error){alert(q.error.message);return}let list=(q.data||[]).map(u=>`<div class="row"><span><b>${esc(u.email)}</b></span><select id="role_${u.user_id}"><option value="viewer" ${u.role==="viewer"?"selected":""}>Viewer</option><option value="editor" ${u.role==="editor"?"selected":""}>Editor</option><option value="admin" ${u.role==="admin"?"selected":""}>Admin</option></select><button onclick="changeRole('${esc(u.email)}','${u.user_id}')">Save</button>${u.user_id!==user.id?`<button class="danger" onclick="removeAccess('${esc(u.email)}')">Remove</button>`:""}</div>`).join("");showModal(`<h2>User access</h2><p class="msg">Enter their email and role. They will receive an invitation and can set their password without you using the Supabase dashboard.</p><div class="toolbar"><input id="newUserEmail" type="email" placeholder="Existing account email" style="flex:1"><select id="newUserRole"><option value="viewer">Viewer</option><option value="editor">Editor</option></select><button onclick="addUserRole()">Add / set role</button></div><div>${list||"No users found."}</div><p><button class="secondary" onclick="closeModal()">Done</button></p>`)}async function addUserRole(){let email=$("newUserEmail").value.trim(),r=$("newUserRole").value;if(!email)return;let x=await sb.functions.invoke("invite_schedule_user",{body:{email,role:r}});if(x.error)alert(x.error.message);else if(x.data?.error)alert(x.data.error);else{alert("Invitation sent. They can set their password from the email and then sign in here.");usersModal()}}async function changeRole(email,uid){let r=$("role_"+uid).value,x=await sb.rpc("admin_set_schedule_role",{p_email:email,p_role:r});if(x.error)alert(x.error.message);else usersModal()}async function removeAccess(email){if(!confirm("Remove this person's schedule access?"))return;let x=await sb.rpc("admin_remove_schedule_access",{p_email:email});if(x.error)alert(x.error.message);else usersModal()}
+async function usersModal(){let q=await sb.rpc("admin_list_schedule_users");if(q.error){alert(q.error.message);return}let list=(q.data||[]).map(u=>`<div class="row"><span><b>${esc(u.email)}</b></span><select id="role_${u.user_id}"><option value="viewer" ${u.role==="viewer"?"selected":""}>Viewer</option><option value="editor" ${u.role==="editor"?"selected":""}>Editor</option><option value="admin" ${u.role==="admin"?"selected":""}>Admin</option></select><button onclick="changeRole('${esc(u.email)}','${u.user_id}')">Save</button>${u.user_id!==user.id?`<button class="danger" onclick="removeAccess('${esc(u.email)}')">Remove</button>`:""}</div>`).join("");showModal(`<h2>User access</h2><p class="msg">Enter their email and role. They will receive an invitation and can set their password without you using the Supabase dashboard.</p><div class="toolbar"><input id="newUserEmail" type="email" placeholder="Existing account email" style="flex:1"><select id="newUserRole"><option value="viewer">Viewer</option><option value="editor">Editor</option></select><button onclick="addUserRole()">Add / set role</button></div><div>${list||"No users found."}</div><p><button class="secondary" onclick="closeModal()">Done</button></p>`)}async function addUserRole(){let email=$("newUserEmail").value.trim(),r=$("newUserRole").value;if(!email)return;let x=await sb.functions.invoke("invite_schedule_user",{body:{email,role:r}});if(x.error)alert(x.error.message);else if(x.data?.error)alert(x.data.error);else{alert(x.data?.existing?"This email already has an account. Its schedule role was updated; use password reset if the person cannot sign in.":"Invitation sent. Open the invitation link and set a password before signing in.");usersModal()}}async function changeRole(email,uid){let r=$("role_"+uid).value,x=await sb.rpc("admin_set_schedule_role",{p_email:email,p_role:r});if(x.error)alert(x.error.message);else usersModal()}async function removeAccess(email){if(!confirm("Remove this person's schedule access?"))return;let x=await sb.rpc("admin_remove_schedule_access",{p_email:email});if(x.error)alert(x.error.message);else usersModal()}
 
 function bindQuickCommand(){
   const input=$("quickCommandInput");
