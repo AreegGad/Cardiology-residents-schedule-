@@ -117,6 +117,7 @@ const MORNING_THURSDAY_ONLY=new Set([
 ]);
 function dutyAllowedOnDow(d,dow){
   const name=String(d?.name||"").normalize("NFC").replace(/\s+/g," ").trim().toLocaleLowerCase();
+  if(d?.duty_type==="morning" && dow===5) return false;
   if(d?.duty_type==="morning" && dow===4){
     return MORNING_THURSDAY_ONLY.has(name);
   }
@@ -144,7 +145,8 @@ async function setAssign(did,slot,day,rid,renderAfter=true){
   const duty=duties.find(x=>x.id===did);
   const [yy,mm]=currentKey.split("-").map(Number);
   const dow=new Date(yy,mm-1,day).getDay();
-  if(duty && !dutyAllowedOnDow(duty,dow)){
+  // Disallowed days block new assignments, but always allow clearing an existing one.
+  if(rid && duty && !dutyAllowedOnDow(duty,dow)){
     if(renderAfter)alert(`${duty.name} is not scheduled on ${dayName(currentKey,day)}.`);
     return false;
   }
@@ -214,29 +216,51 @@ function render(){
    if(canEdit()){const exBtn=document.createElement("button");exBtn.type="button";exBtn.className="secondary";exBtn.style.cssText="display:block;margin-top:5px;padding:3px 5px;font-size:10px;white-space:nowrap";const exCount=weekdayExclusions.filter(e=>e.weekday===dow).length;exBtn.textContent=exCount?`Unavailable (${exCount})`:`Strike out ${DAYS[dow]}`;exBtn.onclick=()=>openWeekdayExclusions(dow);dateCell.appendChild(exBtn)}
    shown.forEach(d=>{
      let cell=document.createElement("td");
-     if(!dutyAllowedOnDay(d,day)){
+     const allowedToday=dutyAllowedOnDay(d,day);
+     const dayAssignments=orderedSlots(d,day);
+     if(!allowedToday && !dayAssignments.some(item=>item.a?.resident_id)){
        cell.innerHTML='<span class="msg">Not scheduled</span>';
        cell.style.background="#f3f5f7";
        cell.style.color="#a0a8b0";
        row.appendChild(cell);
        return;
      }
-     for(const item of orderedSlots(d,day)){
+     for(const item of dayAssignments){
        const sl=item.slot;
        let sel=document.createElement("select");sel.className="assign";sel.disabled=!canEdit();
        let op=document.createElement("option");op.value="";op.textContent="- empty -";sel.appendChild(op);
        let a=item.a,used=occupied(day).filter(id=>id!==a?.resident_id);
-       for(const batch of BATCHES){
-         let group=document.createElement("optgroup");group.label=batch;
-         residents.filter(r=>r.batch===batch&&!used.includes(r.id)&&(!isExcluded(day,r.id)||r.id===a?.resident_id)).forEach(r=>{
-           let o=document.createElement("option");o.value=r.id;o.textContent=r.name;group.appendChild(o)
-         });
-         if(group.children.length)sel.appendChild(group)
+       if(allowedToday){
+         for(const batch of BATCHES){
+           let group=document.createElement("optgroup");group.label=batch;
+           residents.filter(r=>r.batch===batch&&!used.includes(r.id)&&(!isExcluded(day,r.id)||r.id===a?.resident_id)).forEach(r=>{
+             let o=document.createElement("option");o.value=r.id;o.textContent=r.name;group.appendChild(o)
+           });
+           if(group.children.length)sel.appendChild(group)
+         }
+       }else if(a?.resident_id){
+         const current=residents.find(r=>r.id===a.resident_id);
+         if(current){let o=document.createElement("option");o.value=current.id;o.textContent=`${current.name} (existing)`;sel.appendChild(o)}
        }
        sel.value=a?.resident_id||"";
        let rr=residents.find(r=>r.id===sel.value);if(rr){sel.classList.add("res"+rr.batch);cell.classList.add("batch-cell","res"+rr.batch);let bl=document.createElement("span");bl.className="batch-label p"+rr.batch;bl.textContent=rr.batch;cell.appendChild(bl)}
        sel.onchange=async()=>{const sy=window.scrollY,st=wrap.scrollTop,slx=wrap.scrollLeft;await setAssign(d.id,sl,day,sel.value,false);await loadAssignments();render();requestAnimationFrame(()=>{window.scrollTo(0,sy);const w=document.querySelector(".table-wrap");if(w){w.scrollTop=st;w.scrollLeft=slx}})};
-       cell.appendChild(sel)
+       cell.appendChild(sel);
+       if(canEdit() && a?.resident_id){
+         const clearBtn=document.createElement("button");
+         clearBtn.type="button";clearBtn.className="danger";clearBtn.textContent="Unschedule";
+         clearBtn.style.cssText="display:block;margin-top:4px;padding:4px 7px;font-size:11px";
+         clearBtn.title="Remove this assignment without deleting the duty";
+         clearBtn.onclick=async()=>{
+           if(!confirm(`Unschedule ${residents.find(r=>r.id===a.resident_id)?.name||"this resident"} from ${d.name} on ${dayName(currentKey,day)} ${day}?`))return;
+           const sy=window.scrollY,st=wrap.scrollTop,slx=wrap.scrollLeft;
+           const ok=await setAssign(d.id,sl,day,"",false);
+           if(!ok)return;
+           await loadAssignments();render();
+           requestAnimationFrame(()=>{window.scrollTo(0,sy);const w=document.querySelector(".table-wrap");if(w){w.scrollTop=st;w.scrollLeft=slx}});
+         };
+         cell.appendChild(clearBtn);
+       }
      }
      row.appendChild(cell)
    });
